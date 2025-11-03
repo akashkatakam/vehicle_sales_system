@@ -129,7 +129,7 @@ class SalesOrder:
         
         # --- Title and Header ---
         c.setFont("Helvetica-Bold", 18)
-        c.drawString(x_margin, y_cursor, f"DELIVERY CHALLAN - {self.branch_id}")
+        c.drawString(x_margin, y_cursor, f"DELIVERY CHALLAN - {self.branch_name}")
         c.setFont("Helvetica-Bold", 12)
         c.drawString(width_l - x_margin - 2*inch , y_cursor, f"DATE: {current_date}")
         y_cursor -= 0.3 * inch

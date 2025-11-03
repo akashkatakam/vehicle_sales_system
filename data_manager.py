@@ -1,6 +1,6 @@
 # data_manager.py
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, text
 import models
 from typing import Dict, Any, List, Optional, Tuple
@@ -82,6 +82,33 @@ def get_branch_sequencing_data(db: Session, branch_id: str) -> Optional[models.B
     """Retrieves the branch record (with counters) using a fresh, non-cached read."""
     return db.query(models.Branch).filter(models.Branch.Branch_ID == branch_id).first()
 
+#@st.cache_data(ttl=600) # Cache data for 10 minutes
+def get_all_sales_records_for_dashboard(db: Session) -> pd.DataFrame:
+    """
+    Fetches all sales records and joins with the Branch table
+    to get branch names. Returns a clean Pandas DataFrame.
+    """
+    
+    # 1. Query to join SalesRecord with Branch
+    # We use joinedload to efficiently grab the related branch object
+    query = (
+        db.query(models.SalesRecord)
+        .options(joinedload(models.SalesRecord.branch))
+        .order_by(models.SalesRecord.Timestamp.desc())
+    )
+    
+    # 2. Read directly into Pandas for easier analytics
+    df = pd.read_sql(query.statement, db.get_bind())
+    
+    # 3. Map Branch_ID to Branch_Name for the charts
+    # We get all branches (this will be cached from the main app)
+    branches = {b.Branch_ID: b.Branch_Name for b in get_all_branches(db)}
+    df['Branch_Name'] = df['Branch_ID'].map(branches)
+    
+    # 4. Convert timestamp to datetime object for filtering
+    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+    
+    return df
 
 # --- TRANSACTION WRITE FUNCTIONS ---
 
