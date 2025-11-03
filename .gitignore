@@ -1,0 +1,12 @@
+.DS_Store
+rough
+solara_app.py
+.vscode/launch.json
+__pycache__/data_logic.cpython-313.pyc
+__pycache__/data_manager.cpython-313.pyc
+__pycache__/database.cpython-313.pyc
+__pycache__/models.cpython-313.pyc
+__pycache__/order.cpython-313.pyc
+database_setup/*
+create_tables.py
+check.py
