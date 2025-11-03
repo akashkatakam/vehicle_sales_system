@@ -1,7 +1,7 @@
 # models.py
 
 from typing import final
-from sqlalchemy import Column, Enum, Integer, String, Float, ForeignKey, DateTime,UniqueConstraint
+from sqlalchemy import Boolean, Column, Enum, Integer, String, Float, ForeignKey, DateTime,UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -34,6 +34,9 @@ class Branch(Base):
     
     # Pricing Variance
     Pricing_Adjustment = Column(Float, default=0.0)
+    Firm_ID_1 = Column(Integer, ForeignKey("firm_master.Firm_ID")) 
+    # Maps Slot 2 (accessories 5-10) to a Firm_ID
+    Firm_ID_2 = Column(Integer, ForeignKey("firm_master.Firm_ID"), nullable=True)
     
     # Relationships
     executives = relationship("Executive", back_populates="branch")
@@ -127,7 +130,8 @@ class FirmMaster(Base):
     
     Firm_ID = Column(Integer, primary_key=True)
     Firm_Name = Column(String(100))
-    Invoice_Prefix = Column(String(5))
+    Invoice_Prefix = Column(String(20))
+    Gst_No = Column(String(200))
 
 
 # --- 3. TRANSACTION LEDGER ---
@@ -174,6 +178,8 @@ class SalesRecord(Base):
     # Accessory Invoice Tracking (Logs the *final* sequential number used)
     Acc_Inv_1_No = Column(Integer, default=0) 
     Acc_Inv_2_No = Column(Integer, default=0)
+    pr_fee_checkbox= Column(Boolean) 
+    ew_selection =  Column(String(50))
     
     # Relationships
     branch = relationship("Branch", back_populates="sales")

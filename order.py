@@ -19,7 +19,7 @@ class SalesOrder:
     def __init__(self, customer_name, place, phone, vehicle_row: Dict[str, Any], final_cost_by_staff, 
                  sales_staff, financier_name, executive_name, vehicle_color_name, 
                  hp_fee_to_charge, incentive_earned, banker_name, dc_number,
-                 branch_name, accessory_bills: List[Dict[str, Any]],branch_id):
+                 branch_name, accessory_bills: List[Dict[str, Any]], branch_id, pr_fee_checkbox, ew_selection):
         
         # --- Metadata ---
         self.branch_id = branch_id
@@ -46,6 +46,8 @@ class SalesOrder:
         self.final_cost = final_cost_by_staff
         self.discount = self.listed_price - self.final_cost
         self.vehicle_color_name = vehicle_color_name
+        self.pr_fee_checkbox = pr_fee_checkbox # <-- NEW (Pass the boolean flag)
+        self.ew_selection = ew_selection
         
         # --- Finance Details ---
         self.sale_type = "Cash"
@@ -96,7 +98,10 @@ class SalesOrder:
             # --- Sequential Counters for Logging ---
             'DC_Sequence_No': dc_sequence_no, # This is popped off in data_manager
             'Acc_Inv_1_No': acc_inv_1_no, 
-            'Acc_Inv_2_No': acc_inv_2_no
+            'Acc_Inv_2_No': acc_inv_2_no,
+            'pr_fee_checkbox' : self.pr_fee_checkbox,
+            'ew_selection': self.ew_selection
+
         }
         return data
 
@@ -171,11 +176,11 @@ class SalesOrder:
         
         x_price_col = x_margin + 3.5 * inch
         
-        c.drawString(x_margin, y_cursor, "On-Road Price (ORP) Component:")
+        c.drawString(x_margin, y_cursor, "On-Road Price (ORP):")
         c.drawString(x_price_col, y_cursor, f"Rs.{self.orp_price:,.2f}")
         y_cursor -= row_height
         
-        c.drawString(x_margin, y_cursor, "Additional Fees/Taxes Component:")
+        c.drawString(x_margin, y_cursor, "Others:")
         c.drawString(x_price_col, y_cursor, f"Rs.{self.tax_component:,.2f}")
         y_cursor -= row_height
         
@@ -183,12 +188,12 @@ class SalesOrder:
         y_cursor -= 0.1 * inch
         
         c.setFont("Helvetica-Bold", 10)
-        c.drawString(x_margin, y_cursor, "CSV LISTED TOTAL PRICE:")
+        c.drawString(x_margin, y_cursor, "LISTED TOTAL PRICE:")
         c.drawString(x_price_col, y_cursor, f"Rs.{self.listed_price:,.2f}")
         y_cursor -= 0.3 * inch
 
         c.setFillColor(red)
-        c.drawString(x_margin, y_cursor, "Discount / Adjustment:")
+        c.drawString(x_margin, y_cursor, "Discount:")
         c.drawString(x_price_col, y_cursor, f"- Rs.{self.discount:,.2f}")
         c.setFillColor(black)
         y_cursor -= 0.3 * inch
@@ -256,12 +261,14 @@ class SalesOrder:
         c.setFont("Helvetica", 12)
         c.drawString(x_margin, y_cursor, f"Customer Name: {self.customer_name}")
         y_cursor -= row_height
-        c.setFont("Helvetica", 10)
+        c.setFont("Helvetica-Bold", 10)
         c.drawString(x_margin, y_cursor, f"DC No.: {self.dc_number}")
         y_cursor -= row_height
-        c.setFont("Helvetica-Bold", 10)
         c.drawString(x_margin, y_cursor, f"Model/Color: {self.vehicle.get('Model')} {self.vehicle.get('Variant')} ({self.vehicle_color_name})")
         y_cursor -= row_height
+        c.drawString(x_margin, y_cursor, f"PR: {self.pr_fee_checkbox}")
+        y_cursor -= row_height
+        c.drawString(x_margin, y_cursor, f"EW: {self.ew_selection}")
         
         # Right Column (Payment Summary)
         summary_y_cursor = 3.6 * inch 
@@ -271,7 +278,7 @@ class SalesOrder:
         c.setFont("Helvetica-Bold", 10)
         c.drawString(x_col_split, summary_y_cursor, f"Finance name: Rs.{self.financier_name}")
         summary_y_cursor -= row_height
-
+        
         # --- Footer Signatures ---
         y_cursor = 2 * inch 
         c.line(x_margin, y_cursor, x_margin + 2 * inch, y_cursor)
@@ -325,9 +332,8 @@ def draw_bill_content(c, invoice_data, firm_details, y_start, copy_text, LINE_HE
     y_pos -= LINE_HEIGHT
     
     c.setFont("Helvetica", 9)
-    c.drawString(MARGIN, y_pos, firm_details.get('Firm_Address', 'N/A'))
+    c.drawString(MARGIN, y_pos, f"GSTIN: {firm_details.get('Gst_No', 'N/A')}")
     y_pos -= LINE_HEIGHT
-    c.drawString(MARGIN, y_pos, f"GSTIN: {firm_details.get('Firm_GSTIN', 'N/A')}")
 
     # 2. INVOICE HEADER 
     c.setFont("Helvetica-Bold", 10)

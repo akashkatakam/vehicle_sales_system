@@ -3,10 +3,11 @@ import pandas as pd
 import io
 from typing import Dict, Any, List, Tuple
 from datetime import datetime
+from sqlalchemy.orm import Session
 
 # --- Local Module Imports ---
 from database import get_db, Base, engine
-from models import Branch
+import models
 from data_manager import (
     get_all_branches, get_config_lists_by_branch, get_universal_data,
     get_accessory_package_for_model, create_sales_record
@@ -164,6 +165,16 @@ def SalesForm():
         
         selected_vehicle_row = available_variants_df[available_variants_df['Variant'] == selected_variant]
         
+        col_pr, col_ew = st.columns(2)
+        
+        with col_pr:
+            # Checkbox now just tracks if it's applicable
+            pr_fee_checkbox = st.checkbox("PR Fee Applicable?")
+        
+        with col_ew:
+            ew_options = ["None", "3+1", "3+2", "3+3"]
+            ew_selection = st.selectbox("Extended Warranty:", ew_options)
+
         if selected_vehicle_row.empty:
             st.error("Could not find price data.")
             listed_price = 0.0
@@ -275,21 +286,21 @@ def SalesForm():
             return
 
         # --- DB TRANSACTION BLOCK ---
-        db = next(get_db())
+        db: Session = next(get_db())
         try:
             dc_number, dc_seq_no = get_next_dc_number(db, branch_id)
-            
+            branch_obj = db.query(models.Branch).get(branch_id)
             # Generate Accessory Bills
             acc_list = get_accessory_package_for_model(db, selected_model)
-            acc_bills_data = process_accessories_and_split(selected_model, acc_list, firm_master_df)
+            acc_bills_data = process_accessories_and_split(selected_model, acc_list, firm_master_df, branch_obj)
             
             bill_1_seq, bill_2_seq = 0, 0
             for bill in acc_bills_data:
-                inv_str, inv_seq = generate_accessory_invoice_number(db, bill['firm_id'], branch_id)
+                inv_str, inv_seq = generate_accessory_invoice_number(db,branch_obj, bill['firm_id'], bill['accessory_slot'])
                 bill['Invoice_No'] = inv_str
                 bill['Acc_Inv_Seq'] = inv_seq
-                if bill['firm_id'] == 1: bill_1_seq = inv_seq
-                if bill['firm_id'] == 2: bill_2_seq = inv_seq
+                if bill['accessory_slot'] == 1: bill_1_seq = inv_seq
+                if bill['accessory_slot'] == 2: bill_2_seq = inv_seq
 
             # Instantiate SalesOrder
             order = SalesOrder(
@@ -301,7 +312,9 @@ def SalesForm():
                 hp_fee_to_charge, incentive_earned, banker_name, dc_number,
                 branch_name, 
                 [bill for bill in acc_bills_data if bill['grand_total'] > 0],
-                branch_id
+                branch_id,
+                pr_fee_checkbox, # <-- NEW (Pass the boolean flag)
+                ew_selection
             )
             
             if sale_type == "Finance":

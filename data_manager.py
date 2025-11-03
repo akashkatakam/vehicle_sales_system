@@ -112,13 +112,31 @@ def get_all_sales_records_for_dashboard(db: Session) -> pd.DataFrame:
 
 # --- TRANSACTION WRITE FUNCTIONS ---
 
-def create_sales_record(db: Session, record_data: Dict[str, Any]):
+def update_branch_sequences(db: Session, branch_id: str, new_dc_seq: int, new_acc1_seq: int, new_acc2_seq: int):
     """
-    Creates a new sales record entry and updates the branch's sequences
-    in a single atomic transaction.
+    Atomically updates the branch's sequence counters in the 'branches' table.
     """
     try:
-        # 1. Separate the sequence numbers needed for the branch counter update
+        branch = db.query(models.Branch).filter(models.Branch.Branch_ID == branch_id).with_for_update().one()
+        
+        branch.DC_Last_Number = new_dc_seq
+        
+        # Only update the counter if a bill was actually generated for that slot
+        if new_acc1_seq > 0:
+            branch.Acc_Inv_1_Last_Number = new_acc1_seq
+        if new_acc2_seq > 0:
+            branch.Acc_Inv_2_Last_Number = new_acc2_seq
+            
+        # db.commit() will be handled by the create_sales_record function
+        
+    except Exception as e:
+        db.rollback()
+        raise Exception(f"Atomic sequence update failed: {e}")
+
+def create_sales_record(db: Session, record_data: Dict[str, Any]):
+    """Creates a new sales record entry and commits the transaction."""
+    try:
+        # 1. Separate sequence data
         branch_id = record_data['Branch_ID']
         new_dc_seq = record_data.pop('DC_Sequence_No')
         new_acc1_seq = record_data['Acc_Inv_1_No']
@@ -128,11 +146,11 @@ def create_sales_record(db: Session, record_data: Dict[str, Any]):
         db_record = models.SalesRecord(**record_data)
         db.add(db_record)
         
-        # 3. Update the branch counters atomically
-        branch = db.query(models.Branch).filter(models.Branch.Branch_ID == branch_id).with_for_update().one()
-        branch.DC_Last_Number = new_dc_seq
-        branch.Acc_Inv_1_Last_Number = new_acc1_seq
-        branch.Acc_Inv_2_Last_Number = new_acc2_seq
+        # 3. Update all counters atomically
+        update_branch_sequences(
+            db, branch_id, new_dc_seq, 
+            new_acc1_seq, new_acc2_seq
+        )
         
         db.commit()
         db.refresh(db_record)
