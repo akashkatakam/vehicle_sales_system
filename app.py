@@ -109,6 +109,11 @@ def SalesForm():
     # Load data (will be pulled from cache)
     branch_config = load_branch_config(branch_id)
     universal_data = load_universal_data()
+    pricing_adjustment = 0.0 # Default
+    for branch in load_all_branches():
+        if branch.Branch_ID == branch_id:
+            pricing_adjustment = branch.Pricing_Adjustment
+            break
     
     vehicles_df = universal_data['vehicles']
     firm_master_df = universal_data['firm_master']
@@ -116,7 +121,7 @@ def SalesForm():
     STAFF_LIST = branch_config['staff_names']
     EXECUTIVE_LIST = branch_config['executive_names']
     # Add "Other" to the financier list for the dropdown
-    FINANCIER_LIST = branch_config['financier_names']
+    FINANCIER_LIST = branch_config['financier_names'] + ['Other']
     incentive_rules = branch_config['incentive_rules']
 
     # --- B. Initialize Form Variables ---
@@ -179,7 +184,7 @@ def SalesForm():
             st.error("Could not find price data.")
             listed_price = 0.0
         else:
-            listed_price = selected_vehicle_row['FINAL_PRICE'].iloc[0]
+            listed_price = selected_vehicle_row['FINAL_PRICE'].iloc[0] + pricing_adjustment
             st.info(f"Listed Price (Final Price): **₹{listed_price:,.2f}**")
 
         # Negotiation

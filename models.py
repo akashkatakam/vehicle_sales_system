@@ -86,7 +86,6 @@ class VehiclePrice(Base):
     # --- FULL PRICING COLUMNS ---
     EX_SHOWROOM = Column(Float)
     LIFE_TAX = Column(Float)
-    TR_HSRP = Column(Float)
     INSURANCE_1_4 = Column(Float)
     ORP = Column(Float)
     ACCESSORIES = Column(Float)   # NEW
