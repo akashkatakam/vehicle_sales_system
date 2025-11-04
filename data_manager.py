@@ -83,21 +83,24 @@ def get_branch_sequencing_data(db: Session, branch_id: str) -> Optional[models.B
     return db.query(models.Branch).filter(models.Branch.Branch_ID == branch_id).first()
 
 #@st.cache_data(ttl=600) # Cache data for 10 minutes
-def get_all_sales_records_for_dashboard(db: Session) -> pd.DataFrame:
+def get_all_sales_records_for_dashboard(db: Session, branch_id_filter: str = None) -> pd.DataFrame:
     """
-    Fetches all sales records and joins with the Branch table
-    to get branch names. Returns a clean Pandas DataFrame.
+    Fetches all sales records. If branch_id_filter is provided,
+    filters the results for that specific branch.
     """
     
-    # 1. Query to join SalesRecord with Branch
-    # We use joinedload to efficiently grab the related branch object
+    # Start the query
     query = (
         db.query(models.SalesRecord)
         .options(joinedload(models.SalesRecord.branch))
         .order_by(models.SalesRecord.Timestamp.desc())
     )
     
-    # 2. Read directly into Pandas for easier analytics
+    # --- NEW: Apply Branch Filter ---
+    if branch_id_filter:
+        query = query.filter(models.SalesRecord.Branch_ID == branch_id_filter)
+    
+    # 2. Read directly into Pandas
     df = pd.read_sql(query.statement, db.get_bind())
     
     # 3. Map Branch_ID to Branch_Name for the charts
@@ -163,3 +166,33 @@ def create_sales_record(db: Session, record_data: Dict[str, Any]):
     except Exception as e:
         db.rollback()
         raise Exception(f"Transaction failed: {e}")
+
+def update_dd_payment(db: Session, record_id: int, dd_received: float):
+    """
+    Finds a specific sales record by its primary key (id) and updates
+    the payment details. This runs as its own transaction.
+    """
+    try:
+        # 1. Find the record to update
+        record = db.query(models.SalesRecord).filter(models.SalesRecord.id == record_id).first()
+        
+        if not record:
+            st.error(f"Record ID {record_id} not found.")
+            return
+
+        # 2. Get the expected DD amount
+        dd_expected = record.Payment_DD
+        
+        # 3. Calculate shortfall
+        shortfall = dd_expected - dd_received
+        
+        # 4. Update the record's fields
+        record.Payment_DD_Received = dd_received
+        record.Payment_Shortfall = shortfall
+        
+        # 5. Commit the change
+        db.commit()
+        
+    except Exception as e:
+        db.rollback()
+        st.error(f"Error updating record {record_id}: {e}")

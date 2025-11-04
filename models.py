@@ -45,6 +45,7 @@ class Branch(Base):
     executives = relationship("Executive", back_populates="branch")
 
     sales = relationship("SalesRecord", back_populates="branch")
+    users = relationship("User", back_populates="branch")
 
 
 class Executive(Base):
@@ -202,6 +203,11 @@ class User(Base):
     salt = Column(String(64), nullable=False) # Store the salt
     
     role = Column(Enum("Owner", "Back Office"), nullable=False)
+
+    Branch_ID = Column(String(10), ForeignKey("branches.Branch_ID"), nullable=True)
+    
+    # --- NEW RELATIONSHIP ---
+    branch = relationship("Branch", back_populates="users")
     
     def verify_password(self, plain_password: str) -> bool:
         """Checks if the plain password matches the hash."""
