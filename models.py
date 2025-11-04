@@ -5,6 +5,9 @@ from sqlalchemy import Boolean, Column, Enum, Integer, String, Float, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Enum, UniqueConstraint
+import hashlib # <--- IMPORT THIS
+import os #
 
 
 @final
@@ -174,6 +177,9 @@ class SalesRecord(Base):
     Charge_Incentive = Column(Float)
     Payment_DD = Column(Float)
     Payment_DownPayment = Column(Float)
+
+    Payment_DD_Received = Column(Float, default=0.0) # The actual amount received
+    Payment_Shortfall = Column(Float, default=0.0)
     
     # Accessory Invoice Tracking (Logs the *final* sequential number used)
     Acc_Inv_1_No = Column(Integer, default=0) 
@@ -183,3 +189,50 @@ class SalesRecord(Base):
     
     # Relationships
     branch = relationship("Branch", back_populates="sales")
+
+class User(Base):
+    """Stores user logins and roles for the dashboard."""
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(100), unique=True, index=True, nullable=False)
+    
+    # We will store the salt and the hash
+    hashed_password = Column(String(255), nullable=False)
+    salt = Column(String(64), nullable=False) # Store the salt
+    
+    role = Column(Enum("Owner", "Back Office"), nullable=False)
+    
+    def verify_password(self, plain_password: str) -> bool:
+        """Checks if the plain password matches the hash."""
+        
+        # --- CRITICAL FIX ---
+        # 1. Convert the stored hex salt back into raw bytes
+        salt_bytes = bytes.fromhex(self.salt)
+        
+        # 2. Hash the provided password with the retrieved salt
+        check_hash_bytes = hashlib.pbkdf2_hmac(
+            'sha256',
+            plain_password.encode('utf-8'),
+            salt_bytes, # Use the raw bytes
+            100000
+        )
+        
+        # 3. Compare the new hash (in hex) with the stored hash (in hex)
+        return check_hash_bytes.hex() == self.hashed_password
+        # --- END FIX ---
+
+    @staticmethod
+    def hash_password(plain_password: str) -> tuple:
+        """Hashes a new password for storage, returning the hash and salt."""
+        salt_bytes = os.urandom(32) # Generate 32 raw bytes
+        
+        hash_bytes = hashlib.pbkdf2_hmac(
+            'sha256',
+            plain_password.encode('utf-8'),
+            salt_bytes, # Use raw bytes
+            100000
+        )
+        
+        # Return the hex versions of the hash and salt for database storage
+        return hash_bytes.hex(), salt_bytes.hex()

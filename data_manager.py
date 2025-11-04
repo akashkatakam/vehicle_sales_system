@@ -110,6 +110,10 @@ def get_all_sales_records_for_dashboard(db: Session) -> pd.DataFrame:
     
     return df
 
+def get_user_by_username(db: Session, username: str) -> Optional[models.User]:
+    """Retrieves a single user by their username."""
+    return db.query(models.User).filter(models.User.username == username).first()
+
 # --- TRANSACTION WRITE FUNCTIONS ---
 
 def update_branch_sequences(db: Session, branch_id: str, new_dc_seq: int, new_acc1_seq: int, new_acc2_seq: int):
