@@ -303,7 +303,7 @@ def show_dashboard(user_role: str, user_branch_id: str):
     
     # Define columns to show
     columns_to_show_back_office = [
-        'id', 'DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Sales_Staff',
+        'id', 'DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Sales_Staff','Model','Variant','Banker_name','Price_ORP','Payment_DownPayment'
         'Payment_DD', 'Payment_DD_Received', 'Payment_Shortfall'
     ]
     
