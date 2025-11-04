@@ -170,7 +170,6 @@ def show_dashboard(user_role: str, user_branch_id: str):
         col1, col2 = st.columns(2)
         col1.metric("Total Units Sold", f"{total_sales}")
         col2.metric("Average Sale Value", f"₹{avg_sale:,.0f}")
-        st.info("Financial metrics (Revenue, Discount) are restricted for this role.")
     
     st.markdown("---")
 
@@ -231,7 +230,7 @@ def show_dashboard(user_role: str, user_branch_id: str):
     
     # Define columns to show
     columns_to_show_back_office = [
-        'DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Sales_Staff', 'Price_ORP', 'Price_Negotiated_Final','Banker_Name', 'Payment_DownPayment'
+        'DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Sales_Staff','Model','Variant', 'Price_ORP', 'Price_Negotiated_Final','Banker_Name', 'Payment_DownPayment'
         ,'Payment_DD', 'Payment_DD_Received', 'Payment_Shortfall'
     ]
     
