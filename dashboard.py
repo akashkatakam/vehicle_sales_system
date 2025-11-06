@@ -9,6 +9,7 @@ from data_manager import (
 )
 import altair as alt
 import models # <-- Import models
+import datetime
 
 # --- 1. Page Config ---
 st.set_page_config(
@@ -20,7 +21,29 @@ st.set_page_config(
 def check_login():
     """Shows login form and returns True if user is logged in."""
     
+   # --- 1. CHECK FOR EXISTING LOGIN AND TIMEOUT ---
     if st.session_state.get("logged_in", False):
+        
+        # Check if login_time is present
+        if "login_time" not in st.session_state:
+            # If logged in but no timestamp, force logout
+            st.session_state.clear()
+            st.rerun()
+
+        # Check for 1-hour timeout
+        elapsed_time = datetime.datetime.now() - st.session_state.login_time
+        if elapsed_time > datetime.timedelta(hours=1):
+            st.session_state.clear()
+            st.warning("Your session has expired after 1 hour of inactivity. Please log in again.")
+            st.rerun() # Force a rerun to show the login form
+            return False
+
+        # --- User is logged in and session is valid ---
+        
+        # Refresh the login time on every interaction (creates a "sliding" 1-hour window)
+        st.session_state.login_time = datetime.datetime.now()
+        
+        # Display sidebar info
         st.sidebar.success(f"Logged in as: **{st.session_state.role}**")
         if st.session_state.role == "Back Office":
             st.sidebar.info(f"Branch: **{st.session_state.branch_name}**")
@@ -30,6 +53,7 @@ def check_login():
             st.rerun()
         return True
 
+    # --- 2. SHOW LOGIN FORM (if not logged in) ---
     with st.form("login_form"):
         st.title("Staff Login")
         st.markdown("Please log in to access the dashboard.")
@@ -43,9 +67,11 @@ def check_login():
                 user = get_user_by_username(db, username)
                 
                 if user and user.verify_password(password):
+                    # --- SET SESSION STATE ON SUCCESSFUL LOGIN ---
                     st.session_state["logged_in"] = True
                     st.session_state["role"] = user.role
                     st.session_state["user_branch_id"] = user.Branch_ID 
+                    st.session_state["login_time"] = datetime.datetime.now() # <-- ADDED
                     
                     if user.Branch_ID:
                         branch = db.query(models.Branch).filter(models.Branch.Branch_ID == user.Branch_ID).first()
@@ -151,26 +177,30 @@ def show_dashboard(user_role: str, user_branch_id: str):
     st.header("Key Metrics")
     
     if user_role == "Back Office":
-        col1, col2, col3,col4,col5 = st.columns(5)
-        col1.metric("Total Units Sold", f"{total_sales}")
+        col2, col3,col4,col5 = st.columns(4)
         col2.metric("Total DD Expected", f"₹{total_dd_expected:,.0f}")
         col3.metric("Total DD Received", f"₹{total_dd_received:,.0f}")
         col4.metric("Total DD Pending", f"₹{total_dd_pending:,.0f}")
         col5.metric("Total short amount", f"₹{total_short_fall:,.0f}")
 
+        st.subheader("DD Pending by Banker")
         filtered_data['Live_Shortfall'] = filtered_data['Payment_DD'] - filtered_data['Payment_DD_Received']
-            
         banker_data = filtered_data[
-            (filtered_data['Banker_Name'].notna()) & 
-            (filtered_data['Banker_Name'] != 'N/A (Cash Sale)') & 
-            (filtered_data['Banker_Name'] != '') &
-            (filtered_data['Live_Shortfall'] > 0) # Use the live calculation
+            (filtered_data['Banker_Name'].notna()) & (filtered_data['Banker_Name'] != '') &
+            (filtered_data['Live_Shortfall'] > 0) 
         ]
         if not banker_data.empty:
-            banker_summary = banker_data.groupby('Banker_Name')['Live_Shortfall'].sum().reset_index()
-            banker_summary = banker_summary.rename(columns={'Live_Shortfall': 'Total Pending (₹)'})
-            banker_summary['Total Pending (₹)'] = banker_summary['Total Pending (₹)'].apply(lambda x: f"₹{x:,.0f}")
-            st.dataframe(banker_summary, width="stretch", hide_index=True)
+            # --- NEW: Aggregate by sum AND count ---
+            banker_summary = banker_data.groupby('Banker_Name').agg(
+                Total_Pending=('Live_Shortfall', 'sum'),
+                Units_Sold=('id', 'count')
+            ).reset_index()
+            # --- END NEW ---
+            
+            banker_summary = banker_summary.rename(columns={'Banker_Name': 'Banker Name'})
+            banker_summary = banker_summary.sort_values(by='Total_Pending', ascending=False)
+            banker_summary['Total_Pending'] = banker_summary['Total_Pending'].apply(lambda x: f"₹{x:,.0f}")
+            st.dataframe(banker_summary[['Banker Name', 'Total_Pending', 'Units_Sold']], use_container_width=True, hide_index=True)
         else:
             st.info("No pending DD amounts found for any bankers in this period.")
             
@@ -258,24 +288,25 @@ def show_dashboard(user_role: str, user_branch_id: str):
 
             
             st.subheader("DD Pending by Banker")
-            
-            # Calculate live shortfall for the filter
             filtered_data['Live_Shortfall'] = filtered_data['Payment_DD'] - filtered_data['Payment_DD_Received']
-            
             banker_data = filtered_data[
-                (filtered_data['Banker_Name'].notna()) & 
-                (filtered_data['Banker_Name'] != 'N/A (Cash Sale)') & 
-                (filtered_data['Banker_Name'] != '') &
-                (filtered_data['Live_Shortfall'] > 0) # Use the live calculation
+                (filtered_data['Banker_Name'].notna()) & (filtered_data['Banker_Name'] != '') &
+                (filtered_data['Live_Shortfall'] > 0) 
             ]
             if not banker_data.empty:
-                banker_summary = banker_data.groupby('Banker_Name')['Live_Shortfall'].sum().reset_index()
-                banker_summary = banker_summary.rename(columns={'Live_Shortfall': 'Total Pending (₹)'})
-                banker_summary['Total Pending (₹)'] = banker_summary['Total Pending (₹)'].apply(lambda x: f"₹{x:,.0f}")
-                st.dataframe(banker_summary, width="stretch", hide_index=True)
+                # --- NEW: Aggregate by sum AND count ---
+                banker_summary = banker_data.groupby('Banker_Name').agg(
+                    Total_Pending=('Live_Shortfall', 'sum'),
+                    Units_Sold=('id', 'count')
+                ).reset_index()
+                # --- END NEW ---
+                
+                banker_summary = banker_summary.rename(columns={'Banker_Name': 'Banker Name'})
+                banker_summary = banker_summary.sort_values(by='Total_Pending', ascending=False)
+                banker_summary['Total_Pending'] = banker_summary['Total_Pending'].apply(lambda x: f"₹{x:,.0f}")
+                st.dataframe(banker_summary[['Banker Name', 'Total_Pending', 'Units_Sold']], use_container_width=True, hide_index=True)
             else:
                 st.info("No pending DD amounts found for any bankers in this period.")
-            # --- END NEW BANKER TABLE ---
             
 
 
@@ -303,7 +334,7 @@ def show_dashboard(user_role: str, user_branch_id: str):
     
     # Define columns to show
     columns_to_show_back_office = [
-        'id', 'DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Sales_Staff','Model','Variant','Banker_name','Price_ORP','Payment_DownPayment'
+        'id', 'DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Sales_Staff','Model','Variant','Banker_Name','Price_ORP','Payment_DownPayment',
         'Payment_DD', 'Payment_DD_Received', 'Payment_Shortfall'
     ]
     
