@@ -77,6 +77,8 @@ def BranchSelector():
     if not all_branches:
         st.error("FATAL: No branches found in the database. Please seed the 'branches' table.")
         return
+    
+    all_branches = [b for b in all_branches if b.dc_gen_enabled]
 
     # Create a responsive grid of buttons
     cols = st.columns(3) # 4 columns for a wider, cleaner look
