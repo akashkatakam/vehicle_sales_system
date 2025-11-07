@@ -40,6 +40,7 @@ class Branch(Base):
     Firm_ID_1 = Column(Integer, ForeignKey("firm_master.Firm_ID")) 
     # Maps Slot 2 (accessories 5-10) to a Firm_ID
     Firm_ID_2 = Column(Integer, ForeignKey("firm_master.Firm_ID"), nullable=True)
+    dc_gen_enabled =Column(Boolean, nullable=True)
     
     # Relationships
     executives = relationship("Executive", back_populates="branch")
