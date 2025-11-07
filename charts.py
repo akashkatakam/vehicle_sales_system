@@ -2,6 +2,7 @@ import altair as alt
 import streamlit as st
 
 alt.theme.active = "streamlit"
+COLOR_SCALE = alt.Scale(domain=['Variant 1', 'Variant 2', 'Variant 3'], range=['#FF4B4B', '#FF8C8C', '#FFB3B3'])
 def plot_revenue_trend(data):
     time_sales = data.set_index('Timestamp').resample('D')['Price_Negotiated_Final'].sum().reset_index()
     chart = alt.Chart(time_sales).mark_line(point=True).encode(
@@ -12,42 +13,45 @@ def plot_revenue_trend(data):
     st.altair_chart(chart, use_container_width=True)
 
 def plot_vehicle_drilldown(data):
-    # --- 1. Create Selection ---
-    # We select based on the 'Model' field. 
-    # 'empty=True' means nothing is highlighted initially (all full opacity).
-    variant_selection = alt.selection_point(fields=['Variant'], empty=True)
+    """
+    Creates a stacked bar chart of Models by Variant,
+    which filters a chart of Colors stacked by Movement Category.
+    """
+    # 1. Create the selection
+    model_selection = alt.selection_point(fields=['Model'], empty=True)
 
-    # --- 2. Top Chart: Models Stacked by Variant ---
+    # 2. Top Chart: Models Stacked by Variant
     chart_model = alt.Chart(data).mark_bar().encode(
         x=alt.X('Model', title='Vehicle Model', sort='-y'),
         y=alt.Y('count()', title='Total Units Sold'),
-        # Stack by Variant
-        color=alt.Color('Variant', title='Variant Breakdown'),
-        # Use opacity to highlight selection instead of color
-        opacity=alt.condition(variant_selection, alt.value(1.0), alt.value(0.3)),
+        color=alt.Color('Variant', title='Variant'),
+        opacity=alt.condition(model_selection, alt.value(1.0), alt.value(0.3)),
         tooltip=['Model', 'Variant', 'count()']
     ).add_params(
-        variant_selection
+        model_selection
     ).properties(
-        title="Sales by Model (Stacked by Variant - Click to filter below)",
+        title="Sales by Model & Variant (Click to filter below)",
         height=300
-    )
+    ).interactive()
 
-    # --- 3. Bottom Chart: Sales by Color ---
-    chart_color = alt.Chart(data).mark_bar().encode(
+    # 3. Bottom Chart: Colors Stacked by Movement Category
+    chart_color_movement = alt.Chart(data).mark_bar().encode(
         x=alt.X('Paint_Color', title='Paint Color', sort='-y'),
         y=alt.Y('count()', title='Units Sold'),
-        tooltip=['Model', 'Paint_Color', 'count()'],
-        color=alt.value('#FF4B4B') # Single color for clarity
+        
+        # --- UPDATED STACK ---
+        color=alt.Color('Movement_Category', title='Movement'),
+        
+        tooltip=['Model', 'Paint_Color', 'Movement_Category', 'count()']
     ).transform_filter(
-        variant_selection # Filter based on the top chart's selection
+        model_selection # Filtered by the top chart
     ).properties(
-        title="Sales by Paint Color (Filtered by Model)",
+        title="Sales by Color (Filtered by Model, Stacked by Movement)",
         height=300
     )
 
     # 4. Return combined chart
-    return (chart_model & chart_color).resolve_scale(color='independent')
+    st.altair_chart((chart_model & chart_color_movement).resolve_scale(color='independent'))
 
 def plot_top_staff(data):
     staff_data = data.groupby('Sales_Staff')['id'].count().reset_index(name='Units')
@@ -58,4 +62,23 @@ def plot_top_staff(data):
         y=alt.Y('Sales_Staff', title='Sales Staff', sort='-x'),
         tooltip=['Sales_Staff', 'Units']
     ).interactive()
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart,width='stretch',theme='streamlit')
+
+def plot_sales_by_type(data):
+    """Plots a donut chart for MC vs SC."""
+    type_summary = data.groupby('Vehicle_Type')['id'].count().reset_index(name='Count')
+    
+    base = alt.Chart(type_summary).encode(
+        theta=alt.Theta("Count", stack=True),
+        color=alt.Color("Vehicle_Type", title="Vehicle Class"),
+        tooltip=["Vehicle_Type", "Count"]
+    )
+    
+    pie = base.mark_arc(outerRadius=120)
+    text = base.mark_text(radius=140).encode(
+        text=alt.Text("Count", format=".0f"),
+        order=alt.Order("Vehicle_Type"),
+        color=alt.value("black")
+    )
+    
+    st.altair_chart(pie + text, use_container_width=True)

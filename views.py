@@ -12,64 +12,81 @@ def render_metrics(data, role):
     total_dd_pending = total_dd_expected - total_dd_received
 
     st.header("Key Metrics")
-    if role == "Owner":
-        cols = st.columns(5)
-        cols[0].metric("Revenue", f"₹{data['Price_Negotiated_Final'].sum():,.0f}",width="content")
-        cols[1].metric("Units Sold", f"{total_sales}")
-        cash_sales_count = len(data[data['Banker_Name'] == 'N/A (Cash Sale)'])
-        cols[2].metric("Cash Sale", f"{cash_sales_count}")
-        cols[3].metric("Discounts", f"₹{data['Discount_Given'].sum():,.0f}",width="content")
-        cols[4].metric("DD Pending", f"₹{total_dd_pending:,.0f}",width="content")
-        total_hp_collected = data['Charge_HP_Fee'].sum()
-        total_incentive_collected = data['Charge_Incentive'].sum()
-        total_pr_count = data['pr_fee_checkbox'].sum()
+    with st.container(border=True):
+        if role == "Owner":
+            cols = st.columns(5)
+            cols[0].metric("Revenue", f"₹{data['Price_Negotiated_Final'].sum():,.0f}",width="content")
+            cols[1].metric("Units Sold", f"{total_sales}")
+            cash_sales_count = len(data[data['Banker_Name'] == 'N/A (Cash Sale)'])
+            cols[2].metric("Cash Sale", f"{cash_sales_count}")
+            cols[3].metric("Discounts", f"₹{data['Discount_Given'].sum():,.0f}",width="content")
+            cols[4].metric("DD Pending", f"₹{total_dd_pending:,.0f}",width="content")
+            total_hp_collected = data['Charge_HP_Fee'].sum()
+            total_incentive_collected = data['Charge_Incentive'].sum()
+            total_pr_count = data['pr_fee_checkbox'].sum()
+            st.markdown("---")
+            col6, col7, col8,col9,col10 = st.columns(5)
+            col6.metric("Total PR", f"{int(total_pr_count)}")
+            col7.metric("Total HP Fees", f"₹{(total_hp_collected)}")
+            col8.metric("Total Finance Incentives", f"₹{(total_incentive_collected)}")
+            finance_sales_count = len(data[data['Banker_Name'] != 'N/A (Cash Sale)'])
+            col9.metric("Total Finance sale count", f"{finance_sales_count}")
+        else:
+            cols = st.columns(3)
+            cols[0].metric("Units Sold", f"{total_sales}")
+            cols[1].metric("DD Expected", f"₹{total_dd_expected:,.0f}")
+            cols[2].metric("DD Pending", f"₹{total_dd_pending:,.0f}")
         st.markdown("---")
-        col6, col7, col8,col9,col10 = st.columns(5)
-        col6.metric("Total PR", f"{int(total_pr_count)}")
-        col7.metric("Total HP Fees", f"₹{(total_hp_collected)}")
-        col8.metric("Total Finance Incentives", f"₹{(total_incentive_collected)}")
-        finance_sales_count = len(data[data['Banker_Name'] != 'N/A (Cash Sale)'])
-        col9.metric("Total Finance sale count", f"{finance_sales_count}")
-    else:
-        cols = st.columns(3)
-        cols[0].metric("Units Sold", f"{total_sales}")
-        cols[1].metric("DD Expected", f"₹{total_dd_expected:,.0f}")
-        cols[2].metric("DD Pending", f"₹{total_dd_pending:,.0f}")
-    st.markdown("---")
 
 def render_owner_view(data):
     """Renders the comprehensive 3-tab view for owners."""
     t1, t2, t3 = st.tabs(["💰 Financials", "🚗 Analytics", "📝 Data Entry"])
     with t1:
-        st.subheader("Summary by Branch")
-        branch_sum = data.groupby('Branch_Name').agg(
-            Revenue=('Price_Negotiated_Final', 'sum'),
-            Units=('id', 'count'),
-            DD_Expected=('Payment_DD', 'sum'),
-            DD_Received=('Payment_DD_Received', 'sum')
-        ).reset_index()
-        branch_sum['DD_Pending'] = branch_sum['DD_Expected'] - branch_sum['DD_Received']
-        st.dataframe(branch_sum[['Branch_Name', 'Revenue', 'Units', 'DD_Pending']].style.format({'Revenue':'₹{:,.0f}','DD_Pending':'₹{:,.0f}'}), use_container_width=True, hide_index=True)
+        c_left, c_right = st.columns([3, 2])
         
-        render_banker_table(data)
+        with c_left:
+            with st.container(border=True):
+                st.subheader("Summary by Branch")
+                bsum = data.groupby('Branch_Name').agg(
+                    Rev=('Price_Negotiated_Final', 'sum'), Units=('id', 'count'),
+                    Pending=('Live_Shortfall', 'sum')
+                ).reset_index()
+                bdisp = bsum.copy()
+                bdisp['Rev'] = bdisp['Rev'].apply(lambda x: f"₹{(x)}")
+                bdisp['Pending'] = bdisp['Pending'].apply(lambda x: f"₹{(x)}")
+                st.dataframe(bdisp, use_container_width=True, hide_index=True)
         
-        st.subheader("Revenue Trend")
+        with c_right:
+             with st.container(border=True):
+                render_banker_table(data)
 
+
+    # --- TAB 2: Analytics ---
     with t2:
-        st.altair_chart(
-            charts.plot_vehicle_drilldown(data), 
-            use_container_width=True, 
-            theme="streamlit"
-        )
-        st.subheader("Staff Performance")
-        charts.plot_top_staff(data)
+        with st.container(border=True):
+            st.subheader("Vehicle Sales Drill-down")
+            charts.plot_vehicle_drilldown(data)
+        
+        with st.container(border=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                charts.plot_sales_by_type(data)
+            with col2:
+                # Placeholder for another chart, e.g., Movement by default
+                move_data = data.groupby('Movement_Category')['id'].count().reset_index(name='Units')
+                st.dataframe(move_data, use_container_width=True, hide_index=True)
+        with st.container(border=True):
+            st.subheader("Top Sales Staff")
+            charts.plot_top_staff(data)
 
     with t3:
         render_data_editor(data, "Owner")
 
 def render_backoffice_view(data):
     """Renders the focused view for back-office staff."""
-    render_banker_table(data)
+    with st.container(border=True):
+        c1, c2 = st.columns(2)
+        with c1: render_banker_table(data)
     render_data_editor(data, "Back Office")
 
 # --- Helper Components ---
@@ -87,39 +104,57 @@ def render_data_editor(data, role):
     st.markdown("---")
     st.header("Sales Records & DD Entry")
     
-    col_cfg = {
+    # --- NEW: Pills Filter for Banker ---
+    banker_options = sorted([str(b) for b in data['Banker_Name'].unique() if pd.notna(b) and b != ''])
+    selected_bankers = st.pills("Filter by Financier:", options=banker_options, selection_mode="multi", key="banker_pills",default=banker_options)
+    
+    if selected_bankers:
+        filtered_table_data = data[data['Banker_Name'].isin(selected_bankers)].copy().reset_index(drop=True)
+    else:
+        filtered_table_data = data.copy().reset_index(drop=True)
+
+    column_config = {
         'id': st.column_config.NumberColumn("ID", disabled=True),
+        'DC_Number': st.column_config.TextColumn("DC No.", disabled=True),
         'Payment_DD': st.column_config.NumberColumn("DD Exp.", format="₹%.2f", disabled=True),
-        'Payment_DD_Received': st.column_config.NumberColumn("DD Rec. (Edit)", format="₹%.2f", disabled=False),
+        'Payment_DD_Received': st.column_config.NumberColumn("DD Rec. (Actual)", format="₹%.2f", disabled=False),
         'Live_Shortfall': st.column_config.NumberColumn("Pending", format="₹%.2f", disabled=True)
     }
-    cols_bo = ['id', 'DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Sales_Staff', 'Payment_DD', 'Payment_DD_Received', 'Live_Shortfall']
+    cols_back_office = ['id', 'DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Sales_Staff','Banker_Name','Payment_DownPayment','Payment_DD', 'Payment_DD_Received', 'Live_Shortfall']
     
-    key = "sales_editor"
+    editor_key = "sales_editor"
+    # Determine which DF and columns to show based on role
+    if role == "Owner":
+        df_to_show = filtered_table_data
+        disabled_cols = [c for c in df_to_show.columns if c != 'Payment_DD_Received']
+        st.info("Owner View: Edit 'DD Rec.' to update.")
+    else:
+        df_to_show = filtered_table_data[cols_back_office]
+        disabled_cols = [c for c in df_to_show.columns if c != 'Payment_DD_Received']
+        st.info("Back Office View: Edit 'DD Rec.' to update.")
+
     edited_df = st.data_editor(
-        data if role == "Owner" else data[cols_bo],
-        column_config=col_cfg,
-        disabled=[c for c in data.columns if c != 'Payment_DD_Received'],
-        use_container_width=True, hide_index=True, key=key
+        df_to_show,
+        column_config=column_config,
+        disabled=disabled_cols,
+        hide_index=True, use_container_width=True, key=editor_key
     )
 
     if st.button("Save DD Updates", type="primary"):
-        if key in st.session_state and st.session_state[key]["edited_rows"]:
+        if editor_key in st.session_state and st.session_state[editor_key]["edited_rows"]:
             db = next(get_db())
             try:
                 updates = 0
-                for idx, changes in st.session_state[key]["edited_rows"].items():
+                for idx, changes in st.session_state[editor_key]["edited_rows"].items():
                     if 'Payment_DD_Received' in changes:
-                        # Use the index to find the original record ID in the filtered data
-                        record_id = int(data.iloc[int(idx)]['id'])
-                        update_dd_payment(db, record_id, float(changes['Payment_DD_Received']))
+                        # CRITICAL: Use the ID from the *filtered* table data
+                        rid = int(filtered_table_data.iloc[int(idx)]['id'])
+                        update_dd_payment(db, rid, float(changes['Payment_DD_Received']))
                         updates += 1
                 st.success(f"Updated {updates} records!")
                 st.cache_data.clear()
                 st.rerun()
-            except Exception as e:
-                st.error(f"Save failed: {e}")
-            finally:
-                db.close()
+            except Exception as e: st.error(f"Save failed: {e}")
+            finally: db.close()
         else:
-            st.info("No changes detected.")
+            st.info("No changes to save.")

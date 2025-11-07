@@ -3,6 +3,7 @@ import pandas as pd
 from database import get_db
 from data_manager import get_all_sales_records_for_dashboard, get_all_branches
 import models
+from vehicle_config import get_movement_category, get_vehicle_type
 
 @st.cache_data(ttl=600)
 def load_dashboard_data(branch_id_filter: str):
@@ -24,6 +25,18 @@ def load_dashboard_data(branch_id_filter: str):
             
         branch_map = {b.Branch_ID: b.Branch_Name for b in all_branches if b}
         data['Branch_Name'] = data['Branch_ID'].map(branch_map).fillna(data['Branch_ID'])
+        if 'Model' in data.columns:
+            data['Vehicle_Type'] = data['Model'].apply(get_vehicle_type)
+        else:
+            data['Vehicle_Type'] = 'Unknown'
+            
+        if 'Model' in data.columns and 'Paint_Color' in data.columns:
+            data['Movement_Category'] = data.apply(
+                lambda row: get_movement_category(row['Model'], row['Paint_Color']), 
+                axis=1
+            )
+        else:
+            data['Movement_Category'] = 'N/A'
 
         # 3. Data Type Cleaning & Calculations
         numeric_cols = ['Price_Negotiated_Final', 'Discount_Given', 'Payment_DD', 'Payment_DD_Received']
