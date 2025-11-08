@@ -22,7 +22,7 @@ class ExecutiveRole:
 class IncentiveType:
     PERCENTAGE_DD = "percentage_dd"
     FIXED_FILE = "fixed_file"
-
+@final
 class TransactionType:
     INWARD_OEM = "HMSI"       # Stock arriving from manufacturer (+ Stock)
     INWARD_TRANSFER = "INWARD" # Stock arriving from another branch (+ Stock)
