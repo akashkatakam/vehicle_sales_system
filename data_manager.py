@@ -5,7 +5,7 @@ from sqlalchemy import func, text
 import models
 from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
-from datetime import datetime
+from datetime import date, datetime
 import streamlit as st
 
 # --- CONFIGURATION READS ---
@@ -196,3 +196,12 @@ def update_dd_payment(db: Session, record_id: int, dd_received: float):
     except Exception as e:
         db.rollback()
         st.error(f"Error updating record {record_id}: {e}")
+
+def log_sale(db: Session, branch_id: str, model: str, var: str, color: str, qty: int, dt: date, rem: str):
+    db.add(models.InventoryTransaction(
+        Date=dt, Transaction_Type=models.TransactionType.SALE,
+        Current_Branch_ID=branch_id,
+        Model=model, Variant=var, Color=color, Quantity=qty,
+        Remarks=rem
+    ))
+    db.commit()

@@ -1,13 +1,15 @@
 # models.py
 
 from typing import final
-from sqlalchemy import Boolean, Column, Enum, Integer, String, Float, ForeignKey, DateTime,UniqueConstraint
+from sqlalchemy import Boolean, Column, Enum, Integer, String, Float, ForeignKey, DateTime,UniqueConstraint, Date
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Enum, UniqueConstraint
 import hashlib # <--- IMPORT THIS
-import os #
+import os
+
+from order import IST_TIMEZONE #
 
 
 @final
@@ -20,6 +22,12 @@ class ExecutiveRole:
 class IncentiveType:
     PERCENTAGE_DD = "percentage_dd"
     FIXED_FILE = "fixed_file"
+
+class TransactionType:
+    INWARD_OEM = "HMSI"       # Stock arriving from manufacturer (+ Stock)
+    INWARD_TRANSFER = "INWARD" # Stock arriving from another branch (+ Stock)
+    OUTWARD_TRANSFER = "OUTWARD" # Stock leaving for another branch (- Stock)
+    SALE = "Sale"
     
 # --- 1. CORE CONFIGURATION & SEQUENCING ---
 
@@ -242,3 +250,21 @@ class User(Base):
         
         # Return the hex versions of the hash and salt for database storage
         return hash_bytes.hex(), salt_bytes.hex()
+    
+class InventoryTransaction(Base):
+    __tablename__ = "inventory_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    Timestamp = Column(DateTime, default=datetime.now(IST_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S IST'))
+    Date = Column(Date, nullable=False)
+    Transaction_Type = Column(String(20), nullable=False) 
+    Source_External = Column(String(50), nullable=True)
+    From_Branch_ID = Column(String(10), ForeignKey("branches.Branch_ID"), nullable=True)
+    Current_Branch_ID = Column(String(10), ForeignKey("branches.Branch_ID"), nullable=False)
+    To_Branch_ID = Column(String(10), ForeignKey("branches.Branch_ID"), nullable=True)
+    Model = Column(String(100), nullable=False)
+    Variant = Column(String(100), nullable=False)
+    Color = Column(String(50), nullable=False)
+    Quantity = Column(Integer, nullable=False, default=1)
+    Load_Number = Column(String(50))
+    Remarks = Column(String(255))

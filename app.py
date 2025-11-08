@@ -10,14 +10,14 @@ from database import get_db, Base, engine
 import models
 from data_manager import (
     get_all_branches, get_config_lists_by_branch, get_universal_data,
-    get_accessory_package_for_model, create_sales_record
+    get_accessory_package_for_model, create_sales_record, log_sale
 )
 from data_logic import (
     calculate_finance_fees, get_next_dc_number, generate_accessory_invoice_number,
     process_accessories_and_split,
     HP_FEE_DEFAULT, HP_FEE_BANK_QUOTATION
 )
-from order import SalesOrder
+from order import IST_TIMEZONE, SalesOrder
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
@@ -330,6 +330,12 @@ def SalesForm():
             # Save Data to Database
             export_data = order.get_data_for_export(dc_seq_no, bill_1_seq, bill_2_seq)
             create_sales_record(db, export_data) # This function handles the commit
+            log_sale(
+                db, branch_id, selected_model, 
+                selected_vehicle_row.iloc[0]['Variant'], 
+                selected_paint_color, 1, datetime.now(IST_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S IST'), 
+                f"Auto-logged from DC: {dc_number}"
+            )
             
             # PDF Generation (In-Memory)
             pdf_buffer = io.BytesIO()
