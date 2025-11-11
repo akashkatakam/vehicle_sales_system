@@ -120,7 +120,7 @@ def render_data_editor(data, role):
         'Payment_DD_Received': st.column_config.NumberColumn("DD Rec. (Actual)", format="₹%.2f", disabled=False),
         'Live_Shortfall': st.column_config.NumberColumn("Pending", format="₹%.2f", disabled=True)
     }
-    cols_back_office = ['id', 'DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Sales_Staff','Banker_Name','Payment_DownPayment','Payment_DD', 'Payment_DD_Received', 'Live_Shortfall']
+    cols_back_office = ['DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Model','Variant','Sales_Staff','Banker_Name','Payment_DownPayment','Price_ORP','Payment_DD', 'Payment_DD_Received', 'Live_Shortfall']
     
     editor_key = "sales_editor"
     # Determine which DF and columns to show based on role
