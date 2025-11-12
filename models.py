@@ -263,6 +263,20 @@ class User(Base):
     Branch_ID = Column(String(10), ForeignKey("branches.Branch_ID"), nullable=True)
     
     branch = relationship("Branch", back_populates="users")
+
+    def hash_password(plain_password: str) -> tuple:
+        """Hashes a new password for storage, returning the hash and salt."""
+        salt_bytes = os.urandom(32) # Generate 32 raw bytes
+        
+        hash_bytes = hashlib.pbkdf2_hmac(
+            'sha256',
+            plain_password.encode('utf-8'),
+            salt_bytes, # Use raw bytes
+            100000
+        )
+        
+        # Return the hex versions of the hash and salt for database storage
+        return hash_bytes.hex(), salt_bytes.hex()
     
     def verify_password(self, plain_password: str) -> bool:
         """Checks if the plain password matches the hash."""
