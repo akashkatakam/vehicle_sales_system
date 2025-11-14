@@ -1,12 +1,15 @@
-# inventory_models.py
-
 from typing import final
-from sqlalchemy import Boolean, Column, Enum, Integer, String, Float, ForeignKey, DateTime,UniqueConstraint, Date, Index
+from sqlalchemy import (
+    Boolean, Column, Enum, Integer, String, Float, 
+    ForeignKey, DateTime, UniqueConstraint, Date, Index
+)
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
 import hashlib
 import os
 import pytz
+
+# Define IST timezone as a fallback
 IST_TIMEZONE = pytz.timezone('Asia/Kolkata')
 
 # Use a single Base for the entire application
@@ -56,8 +59,10 @@ class Branch(Base):
     executives = relationship("Executive", back_populates="branch")
     sales = relationship("SalesRecord", back_populates="branch")
     users = relationship("User", back_populates="branch")
+    
+    # Relationships for VehicleMaster
+    vehicles = relationship("VehicleMaster", back_populates="current_branch")
 
-# --- NEW: From inventory_models.py ---
 class BranchHierarchy(Base):
     """
     Stores parent-child relationships for inventory tracking.
@@ -205,8 +210,10 @@ class SalesRecord(Base):
     
     # --- VEHICLE LIFECYCLE FIELDS ---
     fulfillment_status = Column(String(50), default='PDI Pending', nullable=False)
+    # These are now filled by the mechanic, so they can be NULL on creation
     engine_no = Column(String(100), nullable=True, index=True)
     chassis_no = Column(String(100), nullable=True, index=True)
+    
     pdi_assigned_to = Column(String(100), nullable=True, index=True)
     pdi_completion_date = Column(DateTime, nullable=True)
     is_insurance_done = Column(Boolean, default=False, nullable=False)
@@ -215,6 +222,8 @@ class SalesRecord(Base):
     has_dues = Column(Boolean, default=False, nullable=False)
     
     branch = relationship("Branch", back_populates="sales")
+    # Relationship to the vehicle master
+    vehicle = relationship("VehicleMaster", back_populates="sale_record", uselist=False)
 
 
 class InventoryTransaction(Base):
@@ -236,7 +245,38 @@ class InventoryTransaction(Base):
     Load_Number = Column(String(50))
     Remarks = Column(String(255))
 
-# --- 4. USER AUTHENTICATION ---
+# --- 4. NEW: VEHICLE MASTER TABLE ---
+
+class VehicleMaster(Base):
+    """
+    A master list of every unique vehicle.
+    Tracked by chassis_no. This is the new source of truth for inventory.
+    """
+    __tablename__ = "vehicle_master"
+    
+    id = Column(Integer, primary_key=True)
+    chassis_no = Column(String(100), unique=True, nullable=False, index=True)
+    engine_no = Column(String(100), nullable=True, index=True)
+    load_reference_number = Column(String(100), nullable=True)
+    model = Column(String(100))
+    variant = Column(String(100))
+    color = Column(String(100))
+    
+    # Status: 'In Stock', 'Allotted', 'Sold'
+    status = Column(String(50), default='In Stock', index=True)
+    date_received = Column(DateTime, default=datetime.now(IST_TIMEZONE))
+    
+    # Location and Sale Linking
+    current_branch_id = Column(String(10), ForeignKey("branches.Branch_ID"), index=True)
+    sale_id = Column(Integer, ForeignKey("sales_records.id"), nullable=True, index=True)
+    dc_number = Column(String(15),nullable=True,index=True)
+    
+    # Relationships
+    current_branch = relationship("Branch", back_populates="vehicles")
+    sale_record = relationship("SalesRecord", back_populates="vehicle")
+
+
+# --- 5. USER AUTHENTICATION ---
 
 class User(Base):
     """
@@ -263,36 +303,29 @@ class User(Base):
     Branch_ID = Column(String(10), ForeignKey("branches.Branch_ID"), nullable=True)
     
     branch = relationship("Branch", back_populates="users")
-
-    def hash_password(plain_password: str) -> tuple:
-        """Hashes a new password for storage, returning the hash and salt."""
-        salt_bytes = os.urandom(32) # Generate 32 raw bytes
-        
-        hash_bytes = hashlib.pbkdf2_hmac(
-            'sha256',
-            plain_password.encode('utf-8'),
-            salt_bytes, # Use raw bytes
-            100000
-        )
-        
-        # Return the hex versions of the hash and salt for database storage
-        return hash_bytes.hex(), salt_bytes.hex()
     
     def verify_password(self, plain_password: str) -> bool:
         """Checks if the plain password matches the hash."""
-        
-        # --- CRITICAL FIX ---
-        # 1. Convert the stored hex salt back into raw bytes
-        salt_bytes = bytes.fromhex(self.salt)
-        
-        # 2. Hash the provided password with the retrieved salt
-        check_hash_bytes = hashlib.pbkdf2_hmac(
+        try:
+            salt_bytes = bytes.fromhex(self.salt)
+            check_hash_bytes = hashlib.pbkdf2_hmac(
+                'sha256',
+                plain_password.encode('utf-8'),
+                salt_bytes, 
+                100000
+            )
+            return check_hash_bytes.hex() == self.hashed_password
+        except Exception:
+            return False
+
+    @staticmethod
+    def hash_password(plain_password: str) -> tuple:
+        """Hashes a new password for storage, returning the hash and salt."""
+        salt_bytes = os.urandom(32) 
+        hash_bytes = hashlib.pbkdf2_hmac(
             'sha256',
             plain_password.encode('utf-8'),
-            salt_bytes, # Use the raw bytes
+            salt_bytes, 
             100000
         )
-        
-        # 3. Compare the new hash (in hex) with the stored hash (in hex)
-        return check_hash_bytes.hex() == self.hashed_password
-        # --- END FIX ---
+        return hash_bytes.hex(), salt_bytes.hex()

@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from database import get_db
-from data_manager import update_dd_payment
+from data_manager import update_dd_payment, update_insurance_tr_status
 import charts
 
 def render_metrics(data, role):
@@ -11,9 +11,9 @@ def render_metrics(data, role):
     total_dd_received = data['Payment_DD_Received'].sum()
     total_dd_pending = total_dd_expected - total_dd_received
 
-    st.header("Key Metrics")
     with st.container(border=True):
         if role == "Owner":
+            st.header("Key Metrics")
             cols = st.columns(5)
             cols[0].metric("Revenue", f"₹{data['Price_Negotiated_Final'].sum():,.0f}",width="content")
             cols[1].metric("Units Sold", f"{total_sales}")
@@ -31,7 +31,8 @@ def render_metrics(data, role):
             col8.metric("Total Finance Incentives", f"₹{(total_incentive_collected)}")
             finance_sales_count = len(data[data['Banker_Name'] != 'N/A (Cash Sale)'])
             col9.metric("Total Finance sale count", f"{finance_sales_count}")
-        else:
+        elif role=="Back Office":
+            st.header("Key Metrics")
             cols = st.columns(3)
             cols[0].metric("Units Sold", f"{total_sales}")
             cols[1].metric("DD Expected", f"₹{total_dd_expected:,.0f}")
@@ -88,6 +89,101 @@ def render_backoffice_view(data):
         c1, c2 = st.columns(2)
         with c1: render_banker_table(data)
     render_data_editor(data, "Back Office")
+
+def render_insurance_tr_view(data: pd.DataFrame):
+    """
+    Renders the focused view for the Insurance/TR team.
+    Shows records that have completed PDI but not TR.
+    """
+    st.header("Insurance & TR Processing Queue")
+    
+    # 1. Filter data to the relevant queue
+    # We only want to see records that are 'PDI Complete' or 'Insurance Done'
+    statuses_to_show = ['PDI Complete', 'Insurance Done']
+    queue_df = data[data['fulfillment_status'].isin(statuses_to_show)].copy()
+    
+    if queue_df.empty:
+        st.info("No vehicles are currently pending Insurance or TR processing.")
+        return
+
+    # 2. Define columns for the data editor
+    columns_to_show = [
+        'id',
+        'DC_Number',
+        'Customer_Name',
+        'Model',
+        'Variant',
+        'Paint_Color',
+        'chassis_no',
+        'engine_no',
+        'is_insurance_done',
+        'is_tr_done',
+        'has_dues',
+        'has_double_tax'
+    ]
+    
+    # Filter the DataFrame
+    df_to_show = queue_df[columns_to_show].reset_index(drop=True)
+
+    # 3. Configure the data editor
+    column_config = {
+        'id': st.column_config.NumberColumn("ID", disabled=True),
+        'DC_Number': st.column_config.TextColumn("DC No.", disabled=True),
+        'Customer_Name': st.column_config.TextColumn("Customer", disabled=True),
+        'Model': st.column_config.TextColumn("Model", disabled=True),
+        'chassis_no': st.column_config.TextColumn("Chassis", disabled=True),
+        'engine_no': st.column_config.TextColumn("Engine", disabled=True),
+        
+        # These are the editable columns
+        'is_insurance_done': st.column_config.CheckboxColumn("Insurance Done?"),
+        'is_tr_done': st.column_config.CheckboxColumn("TR Done?"),
+        'has_dues': st.column_config.CheckboxColumn("Dues?"),
+        'has_double_tax': st.column_config.CheckboxColumn("Double Tax?"),
+    }
+    
+    # Define which columns are disabled
+    disabled_cols = [
+        'id', 'DC_Number', 'Customer_Name', 'Model', 'chassis_no', 'engine_no'
+    ]
+    
+    editor_key = "insurance_tr_editor"
+    
+    edited_df = st.data_editor(
+        df_to_show,
+        column_config=column_config,
+        disabled=disabled_cols,
+        hide_index=True, 
+        use_container_width=True, 
+        key=editor_key
+    )
+
+    # 4. Add the Save button
+    if st.button("Save Insurance/TR Updates", type="primary"):
+        if editor_key in st.session_state and st.session_state[editor_key]["edited_rows"]:
+            db = next(get_db())
+            try:
+                updates = 0
+                # Get the changes from session state
+                edited_rows = st.session_state[editor_key]["edited_rows"]
+                
+                for idx, changes in edited_rows.items():
+                    # Get the 'id' of the record from our filtered DataFrame
+                    record_id = int(df_to_show.iloc[int(idx)]['id'])
+                    
+                    # 'changes' is a dict like {'is_insurance_done': True}
+                    # We pass this directly to our new data_manager function
+                    update_insurance_tr_status(db, record_id, changes)
+                    updates += 1
+                    
+                st.success(f"Updated {updates} records!")
+                st.cache_data.clear() # Clear the cache to refresh data
+                st.rerun()
+            except Exception as e: 
+                st.error(f"Save failed: {e}")
+            finally: 
+                db.close()
+        else:
+            st.info("No changes to save.")
 
 # --- Helper Components ---
 

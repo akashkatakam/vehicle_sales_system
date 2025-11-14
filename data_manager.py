@@ -205,3 +205,40 @@ def log_sale(db: Session, branch_id: str, model: str, var: str, color: str, qty:
         Remarks=rem
     ))
     db.commit()
+
+def update_insurance_tr_status(db: Session, record_id: int, updates: Dict[str, Any]):
+    """
+    Finds a specific sales record by its primary key (id) and updates
+    the insurance/TR boolean flags.
+    
+    'updates' is a dict like {'is_insurance_done': True, 'has_dues': False}
+    """
+    try:
+        # 1. Find the record to update
+        record = db.query(models.SalesRecord).filter(models.SalesRecord.id == record_id).first()
+        
+        if not record:
+            st.error(f"Record ID {record_id} not found.")
+            return
+
+        # 2. Apply all updates from the dictionary
+        for key, value in updates.items():
+            if hasattr(record, key):
+                setattr(record, key, value)
+        
+        # 3. Update fulfillment status based on progression
+        # We must read the potentially updated values
+        if record.is_tr_done:
+            record.fulfillment_status = "TR Done"
+        elif record.is_insurance_done:
+            record.fulfillment_status = "Insurance Done"
+        else:
+            # If both are unchecked, move it back to PDI Complete
+            record.fulfillment_status = "PDI Complete" 
+
+        # 4. Commit the change
+        db.commit()
+        
+    except Exception as e:
+        db.rollback()
+        st.error(f"Error updating record {record_id}: {e}")

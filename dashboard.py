@@ -1,7 +1,7 @@
 import streamlit as st
 from auth import check_login
 from dashboard_data import load_dashboard_data
-from views import render_metrics, render_owner_view, render_backoffice_view
+from views import render_insurance_tr_view, render_metrics, render_owner_view, render_backoffice_view
 
 # --- Page Setup ---
 st.set_page_config(page_title="Sales Dashboard", layout="wide")
@@ -50,3 +50,5 @@ if check_login():
         render_owner_view(filtered_data)
     elif user_role == "Back Office":
         render_backoffice_view(filtered_data)
+    elif user_role == "Insurance/TR" or user_role=="Owner":
+        render_insurance_tr_view(filtered_data)
