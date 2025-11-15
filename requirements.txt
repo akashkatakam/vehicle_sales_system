@@ -3,3 +3,4 @@ sqlalchemy
 streamlit
 solara
 reportlab
+streamlit-local-storage
