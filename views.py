@@ -37,7 +37,7 @@ def render_metrics(data, role):
             cols[1].metric("Units Sold", f"{total_sales}")
             cash_sales_count = len(data[data['Banker_Name'] == 'N/A (Cash Sale)'])
             cols[2].metric("Cash Sale", f"{cash_sales_count}")
-            finance_sales_count = len(data[data['Banker_Name'] != 'N/A (Cash Sale)'])
+            finance_sales_count = total_sales-cash_sales_count
             cols[3].metric("Total Finance sale count", f"{finance_sales_count}")
             cols[4].metric("Discounts", f"₹{data['Discount_Given'].sum():,.0f}",width="content")
             total_hp_collected = data['Charge_HP_Fee'].sum()
@@ -48,13 +48,24 @@ def render_metrics(data, role):
             col7.metric("Total HP Fees", f"₹{total_hp_collected:,.0f}")
             col8.metric("Total Finance Incentives", f"₹{total_incentive_collected:,.0f}")
             col9.metric("DD Pending", f"₹{total_dd_pending:,.0f}",width="content")
+            col10.metric("DD Expected", f"₹{total_dd_expected:,.0f}")
         elif role=="Back Office":
             st.header("Key Metrics")
             cols = st.columns(3)
             cols[0].metric("Units Sold", f"{total_sales}")
             cols[1].metric("DD Expected", f"₹{total_dd_expected:,.0f}")
             cols[2].metric("DD Pending", f"₹{total_dd_pending:,.0f}")
-        st.markdown("---")
+        elif role=='Insurance/TR':
+            st.header("Key Metrics")
+            cols = st.columns(3)
+            total_tr_pending_count = len(data) - data['is_tr_done'].sum()
+            total_insurance_pending_count = data['is_insurance_done'].sum()
+            total_plates_received =  data['plates_received'].sum()
+            cols[0].metric("Total invoice/TR Pending", f"{total_tr_pending_count}")
+            cols[1].metric("Insurance Pending", f"{total_insurance_pending_count:,.0f}")
+            cols[2].metric("Plates received", f"{total_plates_received:,.0f}")
+            
+            
 
 def render_owner_view(data):
     """Renders the comprehensive 3-tab view for owners."""
