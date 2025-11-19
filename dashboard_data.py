@@ -91,8 +91,6 @@ def load_dashboard_data(branch_id_filter: str):
             else:
                  return create_wa_link(phone, GENERIC_MSG)
 
-        data['WA_Status_Link'] = data.apply(get_contextual_link, axis=1)
-
         return data, all_branches
     finally:
         db.close()
