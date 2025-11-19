@@ -4,6 +4,24 @@ from database import get_db
 from data_manager import update_dd_payment, update_insurance_tr_status
 import charts
 
+BASE_WA_URL = "https://wa.me/"
+INSURANCE_MSG = "Great news! Your vehicle's insurance papers are complete and ready. Find the attached document."
+TR_MSG = "Update: Your vehicle's Temporary registration (TR) is successfully processed. Please visit Katakam Honda to collect your documents needed for registrations"
+PLATES_MSG = "Your Number plates have been received at our branch. Please visit us for fitting at your convenience."
+
+# --- Dialog Function ---
+@st.dialog("📲 Send WhatsApp Update")
+def send_wa_modal(phone: str, message: str, context: str):
+    st.write(f"**Update:** {context}")
+    st.write(f"**Customer Phone:** {phone}")
+    st.info(f"**Message Preview:**\n\n{message}")
+    
+    if phone and len(phone) > 10:
+        link = f"{BASE_WA_URL}{phone}?text={message.replace(' ', '%20')}"
+        st.link_button("🚀 Open WhatsApp", link, type="primary", use_container_width=True)
+    else:
+        st.error("Invalid phone number for WhatsApp.")
+
 def render_metrics(data, role):
     """Renders high-level KPIs based on user role."""
     total_sales = len(data)
@@ -19,18 +37,17 @@ def render_metrics(data, role):
             cols[1].metric("Units Sold", f"{total_sales}")
             cash_sales_count = len(data[data['Banker_Name'] == 'N/A (Cash Sale)'])
             cols[2].metric("Cash Sale", f"{cash_sales_count}")
-            cols[3].metric("Discounts", f"₹{data['Discount_Given'].sum():,.0f}",width="content")
-            cols[4].metric("DD Pending", f"₹{total_dd_pending:,.0f}",width="content")
+            finance_sales_count = len(data[data['Banker_Name'] != 'N/A (Cash Sale)'])
+            cols[3].metric("Total Finance sale count", f"{finance_sales_count}")
+            cols[4].metric("Discounts", f"₹{data['Discount_Given'].sum():,.0f}",width="content")
             total_hp_collected = data['Charge_HP_Fee'].sum()
             total_incentive_collected = data['Charge_Incentive'].sum()
             total_pr_count = data['pr_fee_checkbox'].sum()
-            st.markdown("---")
             col6, col7, col8,col9,col10 = st.columns(5)
             col6.metric("Total PR", f"{int(total_pr_count)}")
-            col7.metric("Total HP Fees", f"₹{(total_hp_collected)}")
-            col8.metric("Total Finance Incentives", f"₹{(total_incentive_collected)}")
-            finance_sales_count = len(data[data['Banker_Name'] != 'N/A (Cash Sale)'])
-            col9.metric("Total Finance sale count", f"{finance_sales_count}")
+            col7.metric("Total HP Fees", f"₹{total_hp_collected:,.0f}")
+            col8.metric("Total Finance Incentives", f"₹{total_incentive_collected:,.0f}")
+            col9.metric("DD Pending", f"₹{total_dd_pending:,.0f}",width="content")
         elif role=="Back Office":
             st.header("Key Metrics")
             cols = st.columns(3)
@@ -111,15 +128,19 @@ def render_insurance_tr_view(data: pd.DataFrame):
         'id',
         'DC_Number',
         'Customer_Name',
+        'Phone_Number',
+        'WA_Phone', 
         'Model',
         'Variant',
         'Paint_Color',
+        'Banker_Name',
         'chassis_no',
         'engine_no',
         'is_insurance_done',
         'is_tr_done',
         'has_dues',
-        'has_double_tax'
+        'has_double_tax',
+        'plates_received'
     ]
     
     # Filter the DataFrame
@@ -130,6 +151,8 @@ def render_insurance_tr_view(data: pd.DataFrame):
         'id': st.column_config.NumberColumn("ID", disabled=True),
         'DC_Number': st.column_config.TextColumn("DC No.", disabled=True),
         'Customer_Name': st.column_config.TextColumn("Customer", disabled=True),
+        'Phone_Number': st.column_config.TextColumn("Phone", disabled=True),
+        'WA_Phone': st.column_config.TextColumn("WA Phone", disabled=True), 
         'Model': st.column_config.TextColumn("Model", disabled=True),
         'chassis_no': st.column_config.TextColumn("Chassis", disabled=True),
         'engine_no': st.column_config.TextColumn("Engine", disabled=True),
@@ -137,17 +160,19 @@ def render_insurance_tr_view(data: pd.DataFrame):
         # These are the editable columns
         'is_insurance_done': st.column_config.CheckboxColumn("Insurance Done?"),
         'is_tr_done': st.column_config.CheckboxColumn("TR Done?"),
-        'has_dues': st.column_config.CheckboxColumn("Dues?"),
         'has_double_tax': st.column_config.CheckboxColumn("Double Tax?"),
+        'has_dues': st.column_config.CheckboxColumn("Dues?", disabled=True), 
+        'plates_received': st.column_config.CheckboxColumn("Plates Received?"),
     }
     
     # Define which columns are disabled
     disabled_cols = [
-        'id', 'DC_Number', 'Customer_Name', 'Model', 'chassis_no', 'engine_no'
+        'id', 'DC_Number', 'Customer_Name', 'Model', 'chassis_no', 'engine_no',
+        'Phone_Number', 'WA_Phone', 'has_dues'
     ]
     
     editor_key = "insurance_tr_editor"
-    
+
     edited_df = st.data_editor(
         df_to_show,
         column_config=column_config,
@@ -156,6 +181,48 @@ def render_insurance_tr_view(data: pd.DataFrame):
         use_container_width=True, 
         key=editor_key
     )
+
+    # --- POPUP LOGIC: Trigger modal on check ---
+    if editor_key in st.session_state and st.session_state[editor_key].get("edited_rows"):
+        # Initialize tracker for processed interactions in this session
+        if "processed_wa_popups" not in st.session_state:
+            st.session_state.processed_wa_popups = set()
+            
+        edited_rows = st.session_state[editor_key]["edited_rows"]
+        
+        # Iterate through edits to find newly checked boxes
+        for idx_str, changes in edited_rows.items():
+            idx = int(idx_str)
+            
+            # Define the columns we want to trigger notifications for
+            trigger_map = {
+                'is_insurance_done': ('Insurance Completed', INSURANCE_MSG),
+                'is_tr_done': ('TR Done', TR_MSG),
+                'plates_received': ('Plates Received', PLATES_MSG)
+            }
+            
+            for col, label_msg_tuple in trigger_map.items():
+                # If this specific column was changed to True
+                if changes.get(col) is True:
+                    unique_interaction_id = f"{idx}_{col}"
+                    
+                    # Only show if we haven't shown it yet
+                    if unique_interaction_id not in st.session_state.processed_wa_popups:
+                        # Get Phone Number
+                        phone = df_to_show.iloc[idx]['WA_Phone']
+                        label, msg = label_msg_tuple
+                        
+                        # Mark as processed BEFORE showing to prevent infinite loop on re-render
+                        st.session_state.processed_wa_popups.add(unique_interaction_id)
+                        
+                        # Trigger Dialog
+                        send_wa_modal(phone, msg, label)
+                        
+                # Optional: If unchecked (False), remove from processed so it can trigger again if re-checked
+                elif changes.get(col) is False:
+                     unique_interaction_id = f"{idx}_{col}"
+                     if unique_interaction_id in st.session_state.processed_wa_popups:
+                         st.session_state.processed_wa_popups.remove(unique_interaction_id)
 
     # 4. Add the Save button
     if st.button("Save Insurance/TR Updates", type="primary"):
@@ -171,11 +238,15 @@ def render_insurance_tr_view(data: pd.DataFrame):
                     record_id = int(df_to_show.iloc[int(idx)]['id'])
                     
                     # 'changes' is a dict like {'is_insurance_done': True}
-                    # We pass this directly to our new data_manager function
                     update_insurance_tr_status(db, record_id, changes)
                     updates += 1
                     
                 st.success(f"Updated {updates} records!")
+                
+                # Clear session state related to edits and popups
+                if "processed_wa_popups" in st.session_state:
+                    del st.session_state.processed_wa_popups
+                
                 st.cache_data.clear() # Clear the cache to refresh data
                 st.rerun()
             except Exception as e: 
@@ -184,7 +255,6 @@ def render_insurance_tr_view(data: pd.DataFrame):
                 db.close()
         else:
             st.info("No changes to save.")
-
 # --- Helper Components ---
 
 def render_banker_table(data):

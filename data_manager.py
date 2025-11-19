@@ -220,10 +220,11 @@ def update_insurance_tr_status(db: Session, record_id: int, updates: Dict[str, A
         if not record:
             st.error(f"Record ID {record_id} not found.")
             return
-
-        # 2. Apply all updates from the dictionary
+        
+        ignore_keys = ['has_dues'] 
+        
         for key, value in updates.items():
-            if hasattr(record, key):
+            if key not in ignore_keys and hasattr(record, key):
                 setattr(record, key, value)
         
         # 3. Update fulfillment status based on progression
