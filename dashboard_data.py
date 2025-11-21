@@ -45,7 +45,7 @@ def load_dashboard_data(branch_id_filter: str):
                 data[col] = pd.to_numeric(data[col], errors='coerce').fillna(0)
 
         # Live calculation for accurate pending amounts
-        data['Live_Shortfall'] = data['Payment_DD'] - data['Payment_DD_Received'] + data['Payment_Shortfall']
+        data['Live_Shortfall'] = data['Payment_DD'] - data['Payment_DD_Received']
 
         # 1. Dynamic Dues Calculation (as requested): True if Live_Shortfall > 0 OR has_double_tax is True
         data['has_dues'] = (data['Live_Shortfall'] > 0.0) | (data['has_double_tax'] == True)
