@@ -9,6 +9,36 @@ INSURANCE_MSG = "Great news! Your vehicle's insurance papers are complete and re
 TR_MSG = "Update: Your vehicle's Temporary registration (TR) is successfully processed. Please visit Katakam Honda to collect your documents needed for registrations"
 PLATES_MSG = "Your Number plates have been received at our branch. Please visit us for fitting at your convenience."
 
+def indian_number_format(n: float | int) -> str:
+    """Formats a number into the Indian numeral system (Lakh, Crore) with two decimal places."""
+    n = round(n, 2)
+    s = f"{abs(n):.2f}"
+    
+    # Split into integer and fractional parts
+    parts = s.split('.')
+    integer_part = parts[0]
+    decimal_part = parts[1] if len(parts) > 1 else '00'
+
+    if len(integer_part) > 3:
+        last_three = integer_part[-3:]
+        other_digits = integer_part[:-3]
+        
+        # Apply comma separation for the 'other_digits' part (groups of two from right)
+        formatted_other = ''
+        while other_digits:
+            if len(other_digits) > 2:
+                formatted_other = other_digits[-2:] + ',' + formatted_other
+                other_digits = other_digits[:-2]
+            else:
+                formatted_other = other_digits + ',' + formatted_other
+                other_digits = ''
+                
+        formatted_number = f"{formatted_other}{last_three}.{decimal_part}"
+    else:
+        formatted_number = s
+    
+    return f"{'-' if n < 0 else ''}{formatted_number}"
+
 # --- Dialog Function ---
 @st.dialog("📲 Send WhatsApp Update")
 def send_wa_modal(phone: str, message: str, context: str):
@@ -65,8 +95,6 @@ def render_metrics(data, role):
             cols[1].metric("Insurance Pending", f"{total_insurance_pending_count:,.0f}")
             cols[2].metric("Plates received", f"{total_plates_received:,.0f}")
             
-            
-
 def render_owner_view(data):
     """Renders the comprehensive 3-tab view for owners."""
     t1, t2, t3 = st.tabs(["💰 Financials", "🚗 Analytics", "📝 Data Entry"])
@@ -89,13 +117,14 @@ def render_owner_view(data):
              with st.container(border=True):
                 render_banker_table(data)
 
-
     # --- TAB 2: Analytics ---
     with t2:
         with st.container(border=True):
             st.subheader("Vehicle Sales Drill-down")
             charts.plot_vehicle_drilldown(data)
-        
+        with st.container(border=True):
+            st.subheader("Financier wise")
+            charts.plot_sales_by_banker_and_staff(data)
         with st.container(border=True):
             col1, col2 = st.columns(2)
             with col1:
