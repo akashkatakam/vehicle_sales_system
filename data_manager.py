@@ -78,9 +78,18 @@ def get_accessory_package_for_model(db: Session, model_name: str) -> List[Dict[s
                 })
     return accessory_list
 
-def get_branch_sequencing_data(db: Session, branch_id: str) -> Optional[models.Branch]:
-    """Retrieves the branch record (with counters) using a fresh, non-cached read."""
-    return db.query(models.Branch).filter(models.Branch.Branch_ID == branch_id).first()
+def get_branch_sequencing_data(db: Session, branch_id: str, lock: bool = False) -> Optional[models.Branch]:
+    """
+    Retrieves the branch record (with counters).
+    If lock=True, it locks the row (SELECT FOR UPDATE) to prevent race conditions.
+    """
+    query = db.query(models.Branch).filter(models.Branch.Branch_ID == branch_id)
+    
+    if lock:
+        # This tells the DB: "Don't let anyone else read/write this row until I commit"
+        return query.with_for_update().first()
+    
+    return query.first()
 
 #@st.cache_data(ttl=600) # Cache data for 10 minutes
 def get_all_sales_records_for_dashboard(db: Session, branch_id_filter: str = None) -> pd.DataFrame:

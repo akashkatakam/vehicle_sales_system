@@ -19,7 +19,7 @@ INVOICE_PREFIXES = {} # This will be populated from FirmMaster
 def get_next_dc_number(db: Session, branch_id: str) -> Tuple[str, int]:
     """Generates the next sequential DC number for the specified branch."""
     
-    branch = data_manager.get_branch_sequencing_data(db, branch_id)
+    branch = data_manager.get_branch_sequencing_data(db, branch_id, lock=True)
     if not branch:
         raise ValueError(f"Branch ID '{branch_id}' not found.")
     
