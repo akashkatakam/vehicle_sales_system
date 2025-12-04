@@ -5,39 +5,12 @@ from data_manager import update_dd_payment, update_insurance_tr_status
 import charts
 
 BASE_WA_URL = "https://wa.me/"
-INSURANCE_MSG = "Great news! Your vehicle's insurance papers are complete and ready. Find the attached document."
-TR_MSG = "Update: Your vehicle's Temporary registration (TR) is successfully processed. Please visit Katakam Honda to collect your documents needed for registrations"
-PLATES_MSG = "Your Number plates have been received at our branch. Please visit us for fitting at your convenience."
 
-def indian_number_format(n: float | int) -> str:
-    """Formats a number into the Indian numeral system (Lakh, Crore) with two decimal places."""
-    n = round(n, 2)
-    s = f"{abs(n):.2f}"
-    
-    # Split into integer and fractional parts
-    parts = s.split('.')
-    integer_part = parts[0]
-    decimal_part = parts[1] if len(parts) > 1 else '00'
+INSURANCE_MSG = "*You’re covered!* \n\nGreat news—your vehicle insurance policy is issued. Please find the copy attached. \n\nSafe driving! \n*Team Katakam Honda*"
 
-    if len(integer_part) > 3:
-        last_three = integer_part[-3:]
-        other_digits = integer_part[:-3]
-        
-        # Apply comma separation for the 'other_digits' part (groups of two from right)
-        formatted_other = ''
-        while other_digits:
-            if len(other_digits) > 2:
-                formatted_other = other_digits[-2:] + ',' + formatted_other
-                other_digits = other_digits[:-2]
-            else:
-                formatted_other = other_digits + ',' + formatted_other
-                other_digits = ''
-                
-        formatted_number = f"{formatted_other}{last_three}.{decimal_part}"
-    else:
-        formatted_number = s
-    
-    return f"{'-' if n < 0 else ''}{formatted_number}"
+TR_MSG = "*Great news!* \n\nYour *TR* is successfully processed. \n\nPlease visit *Katakam Honda* to collect your documents. \n\n*Team Katakam Honda*"
+
+PLATES_MSG = "Your permanent number plates have arrived. \n\nPlease visit *Katakam Honda* between 10 AM - 6 PM for fitting. \n\nRegards, \n*Team Katakam Honda*"
 
 # --- Dialog Function ---
 @st.dialog("📲 Send WhatsApp Update")
@@ -89,7 +62,7 @@ def render_metrics(data, role):
             st.header("Key Metrics")
             cols = st.columns(3)
             total_tr_pending_count = len(data) - data['is_tr_done'].sum()
-            total_insurance_pending_count = data['is_insurance_done'].sum()
+            total_insurance_pending_count = len(data) - data['is_insurance_done'].sum()
             total_plates_received =  data['plates_received'].sum()
             cols[0].metric("Total invoice/TR Pending", f"{total_tr_pending_count}")
             cols[1].metric("Insurance Pending", f"{total_insurance_pending_count:,.0f}")
@@ -156,7 +129,7 @@ def render_insurance_tr_view(data: pd.DataFrame):
     
     # 1. Filter data to the relevant queue
     # We only want to see records that are 'PDI Complete' or 'Insurance Done'
-    statuses_to_show = ['PDI Complete', 'Insurance Done']
+    statuses_to_show = ['PDI Complete', 'Insurance Done', 'TR Done', 'PDI In Progress']
     queue_df = data[data['fulfillment_status'].isin(statuses_to_show)].copy()
     
     if queue_df.empty:
@@ -165,7 +138,6 @@ def render_insurance_tr_view(data: pd.DataFrame):
 
     # 2. Define columns for the data editor
     columns_to_show = [
-        'id',
         'DC_Number',
         'Customer_Name',
         'Phone_Number',
@@ -176,6 +148,7 @@ def render_insurance_tr_view(data: pd.DataFrame):
         'Banker_Name',
         'chassis_no',
         'engine_no',
+        'ew_selection',
         'is_insurance_done',
         'is_tr_done',
         'has_dues',
@@ -188,7 +161,6 @@ def render_insurance_tr_view(data: pd.DataFrame):
 
     # 3. Configure the data editor
     column_config = {
-        'id': st.column_config.NumberColumn("ID", disabled=True),
         'DC_Number': st.column_config.TextColumn("DC No.", disabled=True),
         'Customer_Name': st.column_config.TextColumn("Customer", disabled=True),
         'Phone_Number': st.column_config.TextColumn("Phone", disabled=True),
@@ -196,7 +168,7 @@ def render_insurance_tr_view(data: pd.DataFrame):
         'Model': st.column_config.TextColumn("Model", disabled=True),
         'chassis_no': st.column_config.TextColumn("Chassis", disabled=True),
         'engine_no': st.column_config.TextColumn("Engine", disabled=True),
-        
+        'ew_selection': st.column_config.TextColumn("Extended Warranty", disabled=True),
         # These are the editable columns
         'is_insurance_done': st.column_config.CheckboxColumn("Insurance Done?"),
         'is_tr_done': st.column_config.CheckboxColumn("TR Done?"),
@@ -207,7 +179,7 @@ def render_insurance_tr_view(data: pd.DataFrame):
     
     # Define which columns are disabled
     disabled_cols = [
-        'id', 'DC_Number', 'Customer_Name', 'Model', 'chassis_no', 'engine_no',
+        'DC_Number', 'Customer_Name', 'Model', 'chassis_no', 'engine_no',
         'Phone_Number', 'WA_Phone', 'has_dues'
     ]
     
