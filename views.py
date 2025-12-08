@@ -161,6 +161,7 @@ def render_insurance_tr_view(data: pd.DataFrame):
 
     # 3. Configure the data editor
     column_config = {
+        'id': st.column_config.NumberColumn("ID", disabled=True),
         'DC_Number': st.column_config.TextColumn("DC No.", disabled=True),
         'Customer_Name': st.column_config.TextColumn("Customer", disabled=True),
         'Phone_Number': st.column_config.TextColumn("Phone", disabled=True),
@@ -179,7 +180,7 @@ def render_insurance_tr_view(data: pd.DataFrame):
     
     # Define which columns are disabled
     disabled_cols = [
-        'DC_Number', 'Customer_Name', 'Model', 'chassis_no', 'engine_no',
+        'id','DC_Number', 'Customer_Name', 'Model', 'chassis_no', 'engine_no',
         'Phone_Number', 'WA_Phone', 'has_dues'
     ]
     
