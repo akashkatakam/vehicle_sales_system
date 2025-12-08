@@ -138,6 +138,7 @@ def render_insurance_tr_view(data: pd.DataFrame):
 
     # 2. Define columns for the data editor
     columns_to_show = [
+        'id',
         'DC_Number',
         'Customer_Name',
         'Phone_Number',
