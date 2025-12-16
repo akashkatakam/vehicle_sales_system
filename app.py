@@ -395,9 +395,6 @@ def SalesForm():
             
             st.success(f"{dc_number} generated and saved successfully!")
             st.balloons()
-            del st.session_state['customer_name']
-            del st.session_state['customer_phone']
-            st.rerun()
             
         except Exception as e:
             st.error(f"An error occurred during the transaction: {e}")
