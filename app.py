@@ -88,16 +88,6 @@ def BranchSelector():
             st.session_state.selected_branch_id = branch.Branch_ID
             st.session_state.selected_branch_name = branch.Branch_Name
             st.rerun()
-def reset_form():
-    """Clears all session state keys associated with the sales form."""
-    keys_to_clear = [
-        "cust_name", "cust_phone", "cust_place", "sales_staff",
-        "vehicle_model", "vehicle_variant", "paint_color",
-        "final_cost_input", "sale_type_radio"
-    ]
-    for key in keys_to_clear:
-        if key in st.session_state:
-            del st.session_state[key]
 
 def SalesForm():
     """
@@ -194,12 +184,12 @@ def SalesForm():
     with st.container(border=True):
         st.header("1. Customer & Staff Details")
         col_name, col_phone = st.columns(2)
-        # ADD KEYS HERE
-        name = col_name.text_input("Customer Name:", key="cust_name")
-        phone = col_phone.text_input("Customer Phone Number:", key="cust_phone")
+        name = col_name.text_input("Customer Name:")
+        phone = col_phone.text_input("Customer Phone Number:")
         
-        place = st.text_input("Place/City:", key="cust_place")
-        sales_staff = st.selectbox("Sales Staff:", STAFF_LIST, index=None, placeholder="Select Staff...", key="sales_staff")
+        place = st.text_input("Place/City:")
+        sales_staff = st.selectbox("Sales Staff:", STAFF_LIST) 
+
     # --- 2. Vehicle Selection & Configuration Container ---
     with st.container(border=True):
         st.header("2. Vehicle Configuration & Pricing")
@@ -207,27 +197,20 @@ def SalesForm():
         all_models = sorted(list(set(vehicles_df['Model'].str.strip().unique())))
         col_model, col_variant = st.columns(2)
         
-        selected_model = col_model.selectbox("Vehicle Model:", all_models, index=None, placeholder="Select Model...", key="vehicle_model")
-        variant_options = []
-        if selected_model:
-            available_variants_df = vehicles_df[vehicles_df['Model'].str.strip() == selected_model]
-            variant_options = available_variants_df['Variant'].tolist()
+        selected_model = col_model.selectbox("Vehicle Model:", all_models)
+
+        available_variants_df = vehicles_df[vehicles_df['Model'].str.strip() == selected_model]
+        variant_options = available_variants_df['Variant'].tolist()
         
-        # ADD KEYS
-        selected_variant = col_variant.selectbox("Variant/Trim Level:", variant_options, index=None, placeholder="Select Variant...", key="vehicle_variant")
+        selected_variant = col_variant.selectbox("Variant/Trim Level:", variant_options)
 
-        # Logic to get colors
         colors = ["N/A"]
-        if selected_variant and selected_model:
-             # Re-fetch row to be safe
-             row = vehicles_df[(vehicles_df['Model'].str.strip() == selected_model) & (vehicles_df['Variant'] == selected_variant)]
-             if not row.empty:
-                try:
-                    color_str = row['Color_List'].iloc[0]
-                    colors = [c.strip() for c in color_str.split(',')]
-                except: pass
-
-        selected_paint_color = st.selectbox("Paint Color:", colors, key="paint_color")
+        if selected_variant:
+            try:
+                color_str = available_variants_df[available_variants_df['Variant'] == selected_variant]['Color_List'].iloc[0]
+                colors = [c.strip() for c in color_str.split(',')]
+            except Exception: pass
+        selected_paint_color = st.selectbox("Paint Color:", colors)
         
         selected_vehicle_row = available_variants_df[available_variants_df['Variant'] == selected_variant]
         
@@ -252,7 +235,7 @@ def SalesForm():
         col_final_cost, col_discount_info = st.columns(2)
         final_cost_by_staff = col_final_cost.number_input(
             "Final Vehicle Cost (after discount):", 
-            min_value=0.0, value=float(listed_price), step=100.0, format="%.2f", key="final_cost_input"
+            min_value=0.0, value=float(listed_price), step=100.0, format="%.2f"
         )
         
         discount_amount = listed_price - final_cost_by_staff
@@ -264,7 +247,7 @@ def SalesForm():
     with st.container(border=True):
         st.header("3. Payment & Financing")
         
-        sale_type = st.radio("Sale Type:", ["Cash", "Finance"], horizontal=True, key="sale_type_radio")
+        sale_type = st.radio("Sale Type:", ["Cash", "Finance"], horizontal=True)
 
         if sale_type == "Finance":
             
@@ -412,7 +395,6 @@ def SalesForm():
             
             st.success(f"{dc_number} generated and saved successfully!")
             st.balloons()
-            reset_form()
             
         except Exception as e:
             st.error(f"An error occurred during the transaction: {e}")
