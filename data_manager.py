@@ -126,6 +126,13 @@ def get_user_by_username(db: Session, username: str) -> Optional[models.User]:
     """Retrieves a single user by their username."""
     return db.query(models.User).filter(models.User.username == username).first()
 
+def get_recent_records_for_reprint(db: Session, branch_id: str, limit: int = 10):
+    """Fetches a lightweight list of recent sales for the reprint dropdown."""
+    return db.query(models.SalesRecord.id, models.SalesRecord.DC_Number, models.SalesRecord.Customer_Name)\
+             .filter(models.SalesRecord.Branch_ID == branch_id)\
+             .order_by(models.SalesRecord.Timestamp.desc())\
+             .limit(limit)\
+             .all()
 # --- TRANSACTION WRITE FUNCTIONS ---
 
 def update_branch_sequences(db: Session, branch_id: str, new_dc_seq: int, new_acc1_seq: int, new_acc2_seq: int):

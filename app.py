@@ -9,13 +9,13 @@ from sqlalchemy.orm import Session
 from database import get_db, Base, engine
 import models
 from data_manager import (
-    get_all_branches, get_config_lists_by_branch, get_universal_data,
+    get_all_branches, get_config_lists_by_branch, get_recent_records_for_reprint, get_universal_data,
     get_accessory_package_for_model, create_sales_record, log_sale
 )
 from data_logic import (
     calculate_finance_fees, get_next_dc_number, generate_accessory_invoice_number,
     process_accessories_and_split,
-    HP_FEE_DEFAULT, HP_FEE_BANK_QUOTATION
+    HP_FEE_DEFAULT, HP_FEE_BANK_QUOTATION, reconstruct_sales_order
 )
 from order import IST_TIMEZONE, SalesOrder
 
@@ -107,6 +107,48 @@ def SalesForm():
             st.session_state.selected_branch_name = None
             st.rerun()
     st.markdown("---")
+    with st.expander("🔄 DC Reprint", expanded=False):
+        st.info("Select a recent DC from this branch to download the PDF again.")
+        
+        # Fetch recent records (uncached to get latest)
+        db_reprint = next(get_db())
+        try:
+            recent_recs = get_recent_records_for_reprint(db_reprint, branch_id)
+        finally:
+            db_reprint.close()
+            
+        if recent_recs:
+            # Create options list: "DC-0072 | Customer Name"
+            # We map the string back to the ID
+            reprint_options = {f"{r.DC_Number} | {r.Customer_Name}": r.id for r in recent_recs}
+            selected_reprint = st.selectbox("Select Record:", list(reprint_options.keys()))
+            
+            if st.button("Generate PDF Copy", type="secondary"):
+                rec_id_to_print = reprint_options[selected_reprint]
+                db_reprint = next(get_db())
+                try:
+                    reprint_order = reconstruct_sales_order(db_reprint, rec_id_to_print)
+                    if reprint_order:
+                        # Generate PDF
+                        pdf_buffer = io.BytesIO()
+                        reprint_order.generate_pdf_challan(pdf_buffer)
+                        pdf_buffer.seek(0)
+                        
+                        st.download_button(
+                            label="Download PDF Now",
+                            data=pdf_buffer,
+                            file_name=f"{selected_reprint.split(' | ')[0]}_Reprint.pdf",
+                            mime="application/pdf",
+                            type="primary"
+                        )
+                    else:
+                        st.error("Could not reconstruct order data.")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                finally:
+                    db_reprint.close()
+        else:
+            st.warning("No recent records found for this branch.")
     # --- A. Load Branch Data --- 
     # Load data (will be pulled from cache)
     branch_config = load_branch_config(branch_id)

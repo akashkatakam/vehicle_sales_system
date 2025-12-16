@@ -14,6 +14,84 @@ GST_RATE_CALC = 0.00
 GST_RATE_DISPLAY = 18
 INVOICE_PREFIXES = {} # This will be populated from FirmMaster
 
+def reconstruct_sales_order(db: Session, record_id: int):
+    """
+    Fetches a saved SalesRecord and reconstructs the SalesOrder object 
+    to allow re-printing the PDF.
+    """
+    from order import SalesOrder # Import here to avoid circular dependency
+
+    # 1. Fetch Record
+    record = db.query(models.SalesRecord).get(record_id)
+    if not record:
+        return None
+
+    # 2. Fetch Branch
+    branch = db.query(models.Branch).get(record.Branch_ID)
+
+    # 3. Re-create vehicle_row dict (Minimal fields needed for PDF)
+    vehicle_row = {
+        'Model': record.Model,
+        'Variant': record.Variant,
+        'FINAL_PRICE': record.Price_Listed_Total,
+        'ORP': record.Price_ORP
+    }
+
+    # 4. Re-create Accessories Bill Data
+    # We fetch the *current* package configuration for this model.
+    acc_list = data_manager.get_accessory_package_for_model(db, record.Model)
+    firm_df = data_manager.get_universal_data(db)['firm_master']
+    
+    acc_bills_data = process_accessories_and_split(record.Model, acc_list, firm_df, branch)
+    
+    # 5. OVERRIDE Invoice Numbers with stored values
+    for bill in acc_bills_data:
+        slot = bill['accessory_slot']
+        seq_no = 0
+        if slot == 1: seq_no = record.Acc_Inv_1_No
+        elif slot == 2: seq_no = record.Acc_Inv_2_No
+        
+        # Re-construct the formatted string (e.g. "KM-1025")
+        firm_id = bill['firm_id']
+        firm_obj = db.query(models.FirmMaster).filter(models.FirmMaster.Firm_ID == firm_id).first()
+        prefix = firm_obj.Invoice_Prefix if firm_obj else "ERR"
+        
+        bill['Invoice_No'] = f"{prefix}-{seq_no}"
+        bill['Acc_Inv_Seq'] = seq_no
+
+    # 6. Determine Banker/Executive Logic
+    banker_name_arg = ""
+    if record.Banker_Name and record.Banker_Name != "N/A (Cash Sale)":
+         if record.Finance_Executive == "N/A (Cash Sale)":
+             banker_name_arg = record.Banker_Name
+
+    # 7. Instantiate SalesOrder
+    order = SalesOrder(
+        customer_name=record.Customer_Name,
+        place=record.Place,
+        phone=record.Phone_Number,
+        vehicle_row=vehicle_row,
+        final_cost_by_staff=record.Price_Negotiated_Final,
+        sales_staff=record.Sales_Staff,
+        financier_name=record.Banker_Name, 
+        executive_name=record.Finance_Executive,
+        vehicle_color_name=record.Paint_Color,
+        hp_fee_to_charge=record.Charge_HP_Fee,
+        incentive_earned=record.Charge_Incentive,
+        banker_name=banker_name_arg,
+        dc_number=record.DC_Number,
+        branch_name=branch.Branch_Name,
+        accessory_bills=[b for b in acc_bills_data if b['grand_total'] > 0],
+        branch_id=record.Branch_ID,
+        pr_fee_checkbox=record.pr_fee_checkbox,
+        ew_selection=record.ew_selection
+    )
+    
+    # 8. Set Finance Details if applicable
+    if record.Banker_Name != "N/A (Cash Sale)":
+        order.set_finance_details(record.Payment_DD, record.Payment_DownPayment)
+        
+    return order
 # --- SEQUENCING ---
 
 def get_next_dc_number(db: Session, branch_id: str) -> Tuple[str, int]:
