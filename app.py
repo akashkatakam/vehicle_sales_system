@@ -184,8 +184,8 @@ def SalesForm():
     with st.container(border=True):
         st.header("1. Customer & Staff Details")
         col_name, col_phone = st.columns(2)
-        name = col_name.text_input("Customer Name:")
-        phone = col_phone.text_input("Customer Phone Number:")
+        name = col_name.text_input("Customer Name:", key="customer_name")
+        phone = col_phone.text_input("Customer Phone Number:",key="customer_phone")
         
         place = st.text_input("Place/City:")
         sales_staff = st.selectbox("Sales Staff:", STAFF_LIST) 
@@ -395,6 +395,9 @@ def SalesForm():
             
             st.success(f"{dc_number} generated and saved successfully!")
             st.balloons()
+            del st.session_state['customer_name']
+            del st.session_state['customer_phone']
+            st.rerun()
             
         except Exception as e:
             st.error(f"An error occurred during the transaction: {e}")
