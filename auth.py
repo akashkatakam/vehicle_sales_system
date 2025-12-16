@@ -24,9 +24,17 @@ def check_login():
         
         # --- Sidebar User Info ---
         with st.sidebar:
-            st.success(f"User: **{st.session_state.role}**")
-            if st.session_state.role == "Back Office":
-                st.info(f"Branch: **{st.session_state.branch_name}**")
+            # Display Multiple Roles
+            roles_list = st.session_state.get("roles", [])
+            roles_disp = ", ".join(roles_list)
+            st.success(f"User: **{roles_disp}**")
+            
+            # Display Branch Access Info
+            access_branches = st.session_state.get("accessible_branches", [])
+            if "ALL" in access_branches:
+                st.info("Access: **All Branches**")
+            else:
+                st.info(f"Access: **{len(access_branches)} Branch(es)**")
             
             if st.button("Logout", type="primary", use_container_width=True):
                 st.session_state.clear()
@@ -46,15 +54,27 @@ def check_login():
                 if user and user.verify_password(password):
                     # Set Session State
                     st.session_state["logged_in"] = True
-                    st.session_state["role"] = user.role
-                    st.session_state["user_branch_id"] = user.Branch_ID 
+                    
+                    # 1. Parse Roles (Comma-Separated String -> List)
+                    # Example: "Back Office, Insurance/TR" -> ['Back Office', 'Insurance/TR']
+                    raw_roles = user.role if user.role else ""
+                    st.session_state["roles"] = [r.strip() for r in raw_roles.split(",") if r.strip()]
+                    
+                    # 2. Parse Branches (Comma-Separated String -> List)
+                    # Example: "BR-001, BR-002" -> ['BR-001', 'BR-002']
+                    raw_branches = user.Branch_ID if user.Branch_ID else ""
+                    
+                    # Check for "ALL" access (case-insensitive)
+                    if "ALL" in raw_branches.upper():
+                        st.session_state["accessible_branches"] = ["ALL"]
+                    else:
+                        st.session_state["accessible_branches"] = [
+                            b.strip() for b in raw_branches.split(",") if b.strip()
+                        ]
+
+                    st.session_state["username"] = user.username
                     st.session_state["login_time"] = datetime.now()
                     
-                    if user.Branch_ID:
-                        branch = db.query(models.Branch).filter(models.Branch.Branch_ID == user.Branch_ID).first()
-                        st.session_state["branch_name"] = branch.Branch_Name if branch else "N/A"
-                    else:
-                        st.session_state["branch_name"] = "All Branches"
                     st.rerun()
                 else:
                     st.error("Invalid username or password.")

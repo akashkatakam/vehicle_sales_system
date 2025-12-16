@@ -58,7 +58,6 @@ class Branch(Base):
     # --- Relationships ---
     executives = relationship("Executive", back_populates="branch")
     sales = relationship("SalesRecord", back_populates="branch")
-    users = relationship("User", back_populates="branch")
     
     # Relationships for VehicleMaster
     vehicles = relationship("VehicleMaster", back_populates="current_branch")
@@ -293,17 +292,17 @@ class User(Base):
     salt = Column(String(64), nullable=False) 
     
     # --- MERGED ROLES ---
-    role = Column(Enum(
-        "Owner", 
-        "Back Office", 
-        "PDI", 
-        "Mechanic", 
-        "Insurance/TR"
-    ), nullable=False)
-
-    Branch_ID = Column(String(10), ForeignKey("branches.Branch_ID"), nullable=True)
+    # role = Column(Enum(
+    #     "Owner", 
+    #     "Back Office", 
+    #     "PDI", 
+    #     "Mechanic", 
+    #     "Insurance/TR"
+    # ), nullable=False)
+    role = Column(String(255), nullable=False, default="Back Office")
     
-    branch = relationship("Branch", back_populates="users")
+    # Store branches like: "BR-001, BR-002" or "ALL"
+    Branch_ID = Column(String(255), nullable=True)
     
     def verify_password(self, plain_password: str) -> bool:
         """Checks if the plain password matches the hash."""
