@@ -220,6 +220,10 @@ class SalesRecord(Base):
     has_double_tax = Column(Boolean, default=False, nullable=False)
     has_dues = Column(Boolean, default=False, nullable=False)
     plates_received = Column(Boolean, default=False, nullable=False)
+    price_accessories = Column(Float, default=0.0)
+    price_ew = Column(Float, default=0.0)
+    price_pr = Column(Float, default=0.0)
+    price_hc = Column(Float, default=0.0)
     
     branch = relationship("Branch", back_populates="sales")
     # Relationship to the vehicle master

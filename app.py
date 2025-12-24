@@ -351,6 +351,16 @@ def SalesForm():
                 if bill['accessory_slot'] == 1: bill_1_seq = inv_seq
                 if bill['accessory_slot'] == 2: bill_2_seq = inv_seq
 
+            base_acc = float(selected_vehicle_row['ACCESSORIES'].iloc[0])
+            base_hc = float(selected_vehicle_row['HC'].iloc[0])
+            base_ew = float(selected_vehicle_row['EW_3_1'].iloc[0])  # Assuming base EW price
+            base_pr = float(selected_vehicle_row['PR_CHARGES'].iloc[0])
+
+            # 2. Apply Logic: Only charge if applicable/selected
+            final_acc = base_acc
+            final_hc = base_hc
+            final_ew = base_ew if ew_selection != "None" else 0.0
+            final_pr = base_pr if pr_fee_checkbox else 0.0
             # Instantiate SalesOrder
             order = SalesOrder(
                 name, place, phone, selected_vehicle_row.iloc[0].to_dict(), final_cost_by_staff, 
@@ -363,7 +373,7 @@ def SalesForm():
                 [bill for bill in acc_bills_data if bill['grand_total'] > 0],
                 branch_id,
                 pr_fee_checkbox, # <-- NEW (Pass the boolean flag)
-                ew_selection
+                ew_selection,final_acc,final_hc,final_ew,final_pr
             )
             
             if sale_type == "Finance":

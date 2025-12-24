@@ -84,7 +84,11 @@ def reconstruct_sales_order(db: Session, record_id: int):
         accessory_bills=[b for b in acc_bills_data if b['grand_total'] > 0],
         branch_id=record.Branch_ID,
         pr_fee_checkbox=record.pr_fee_checkbox,
-        ew_selection=record.ew_selection
+        ew_selection=record.ew_selection,
+        price_accessories=getattr(record, 'price_accessories', 0.0),
+        price_ew=getattr(record, 'price_ew', 0.0),
+        price_pr=getattr(record, 'price_pr', 0.0),
+        price_hc=getattr(record, 'price_hc', 0.0)
     )
     
     # 8. Set Finance Details if applicable

@@ -19,7 +19,8 @@ class SalesOrder:
     def __init__(self, customer_name, place, phone, vehicle_row: Dict[str, Any], final_cost_by_staff, 
                  sales_staff, financier_name, executive_name, vehicle_color_name, 
                  hp_fee_to_charge, incentive_earned, banker_name, dc_number,
-                 branch_name, accessory_bills: List[Dict[str, Any]], branch_id, pr_fee_checkbox, ew_selection):
+                 branch_name, accessory_bills: List[Dict[str, Any]], branch_id, pr_fee_checkbox, ew_selection
+                 ,price_accessories,price_hc,price_ew,price_pr):
         
         # --- Metadata ---
         self.branch_id = branch_id
@@ -56,6 +57,10 @@ class SalesOrder:
         self.dd_amount = 0.0
         self.down_payment = 0.0
         self.remaining_finance_amount = 0.0
+        self.price_accessories = price_accessories
+        self.price_hc = price_hc
+        self.price_ew = price_ew
+        self.price_pr = price_pr
         
         # --- Accessory Billing Data ---
         self.accessory_bills = accessory_bills
@@ -94,7 +99,10 @@ class SalesOrder:
             'Charge_Incentive': self.incentive_earned,
             'Payment_DD': self.dd_amount,
             'Payment_DownPayment': self.down_payment,
-            
+            'price_accessories': self.price_accessories,
+            'price_ew': self.price_ew,
+            'price_pr': self.price_pr,
+            'price_hc': self.price_hc,
             # --- Sequential Counters for Logging ---
             'DC_Sequence_No': dc_sequence_no, # This is popped off in data_manager
             'Acc_Inv_1_No': acc_inv_1_no, 
