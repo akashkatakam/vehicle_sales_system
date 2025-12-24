@@ -30,6 +30,7 @@ if check_login():
         
         # A. Date Range Filter
         min_d, max_d = data['Timestamp'].min().date(), data['Timestamp'].max().date()
+        min_d = min_d.replace(day=1)
         dates = st.date_input("Date Range", [min_d, max_d], min_value=min_d, max_value=max_d)
         
         # B. Branch Filter

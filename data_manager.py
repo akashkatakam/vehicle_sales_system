@@ -245,13 +245,6 @@ def update_insurance_tr_status(db: Session, record_id: int, updates: Dict[str, A
         
         # 3. Update fulfillment status based on progression
         # We must read the potentially updated values
-        if record.is_tr_done:
-            record.fulfillment_status = "TR Done"
-        elif record.is_insurance_done:
-            record.fulfillment_status = "Insurance Done"
-        else:
-            # If both are unchecked, move it back to PDI Complete
-            record.fulfillment_status = "PDI Complete" 
 
         # 4. Commit the change
         db.commit()
