@@ -298,9 +298,18 @@ def render_data_editor(data, role):
         'DC_Number': st.column_config.TextColumn("DC No.", disabled=True),
         'Payment_DD': st.column_config.NumberColumn("DD Exp.", format="₹%.2f", disabled=True),
         'Payment_DD_Received': st.column_config.NumberColumn("DD Rec. (Actual)", format="₹%.2f", disabled=False),
-        'Live_Shortfall': st.column_config.NumberColumn("Pending", format="₹%.2f", disabled=True)
+        'Live_Shortfall': st.column_config.NumberColumn("Pending", format="₹%.2f", disabled=True),
+        'shortfall_received': st.column_config.NumberColumn(
+            "Shortfall Rec. (Update)", format="₹%.2f", disabled=False
+        ),
+        'Price_Negotiated_Final': st.column_config.NumberColumn(
+            "Final Sale Price", format="₹%.2f", disabled=False
+        )
     }
-    cols_back_office = ['DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Model','Variant','Sales_Staff','Banker_Name','Payment_DownPayment','Price_ORP','Payment_DD', 'Payment_DD_Received', 'Live_Shortfall']
+
+    cols_back_office = ['DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Model','Variant','Sales_Staff','Banker_Name',
+                        'Finance_Executive','Payment_DownPayment','Price_ORP','Price_Negotiated_Final','Payment_DD', 'Payment_DD_Received',
+                        'Live_Shortfall','Payment_Shortfall','shortfall_received']
     
     editor_key = "sales_editor"
     # Determine which DF and columns to show based on role
@@ -325,16 +334,42 @@ def render_data_editor(data, role):
             db = next(get_db())
             try:
                 updates = 0
-                for idx, changes in st.session_state[editor_key]["edited_rows"].items():
+                for idx_str, changes in st.session_state[editor_key]["edited_rows"].items():
+                    idx = int(idx_str)
+                    record_row = filtered_table_data.iloc[idx]
+                    rid = int(record_row['id'])
+
+                    # Prepare values to update
+                    new_initial_dd = None
+
+                    # 1. Handle Initial DD Change
                     if 'Payment_DD_Received' in changes:
-                        # CRITICAL: Use the ID from the *filtered* table data
-                        rid = int(filtered_table_data.iloc[int(idx)]['id'])
-                        update_dd_payment(db, rid, float(changes['Payment_DD_Received']))
+                        current_val = record_row['Payment_DD_Received']
+                        # LOGIC: Only allow edit if the current value is 0 or None
+                        if current_val and current_val > 0:
+                            st.warning(
+                                f"Skipped Initial DD update for {record_row['Customer_Name']}: Value already locked (₹{current_val}). Use 'Shortfall Rec.' instead.")
+                        else:
+                            new_initial_dd = float(changes['Payment_DD_Received'])
+
+                    new_shortfall_rec = 0
+                    # 2. Handle Shortfall Rec Change
+                    if 'shortfall_received' in changes:
+                        new_shortfall_rec = float(changes['shortfall_received'])
+
+                    # 3. Perform Update if valid changes exist
+                    if new_initial_dd is not None or new_shortfall_rec is not None:
+                        update_dd_payment(db, rid, new_initial_dd, new_shortfall_rec)
                         updates += 1
-                st.success(f"Updated {updates} records!")
-                st.cache_data.clear()
-                st.rerun()
-            except Exception as e: st.error(f"Save failed: {e}")
-            finally: db.close()
-        else:
-            st.info("No changes to save.")
+
+                if updates > 0:
+                    st.success(f"Successfully updated {updates} records!")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.info("No valid updates processed.")
+
+            except Exception as e:
+                st.error(f"Save failed: {e}")
+            finally:
+                db.close()

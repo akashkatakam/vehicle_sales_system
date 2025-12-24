@@ -201,6 +201,7 @@ class SalesRecord(Base):
 
     Payment_DD_Received = Column(Float, default=0.0) 
     Payment_Shortfall = Column(Float, default=0.0)
+    shortfall_received = Column(Float, default=0.0)
     
     Acc_Inv_1_No = Column(Integer, default=0) 
     Acc_Inv_2_No = Column(Integer, default=0)

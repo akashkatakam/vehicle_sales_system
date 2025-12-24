@@ -183,32 +183,44 @@ def create_sales_record(db: Session, record_data: Dict[str, Any]):
         db.rollback()
         raise Exception(f"Transaction failed: {e}")
 
-def update_dd_payment(db: Session, record_id: int, dd_received: float):
+def update_dd_payment(db: Session, record_id: int, new_initial_dd: float = None, new_shortfall_rec: float = None):
     """
-    Finds a specific sales record by its primary key (id) and updates
-    the payment details. This runs as its own transaction.
+    Updates Initial DD (if provided) and/or Shortfall Recovery (if provided).
+    Recalculates total shortfall automatically.
     """
     try:
-        # 1. Find the record to update
+        # 1. Find the record
         record = db.query(models.SalesRecord).filter(models.SalesRecord.id == record_id).first()
-        
+
         if not record:
             st.error(f"Record ID {record_id} not found.")
             return
 
-        # 2. Get the expected DD amount
-        dd_expected = record.Payment_DD
-        
-        # 3. Calculate shortfall
-        shortfall = dd_expected - dd_received
-        
-        # 4. Update the record's fields
-        record.Payment_DD_Received = dd_received
-        record.Payment_Shortfall = shortfall
-        
-        # 5. Commit the change
+        # 2. Update Initial DD (Only if a value is passed)
+        if new_initial_dd is not None:
+            record.Payment_DD_Received = new_initial_dd
+
+        # 3. Update Shortfall Recovery (Only if a value is passed)
+        if new_shortfall_rec is not None:
+            record.shortfall_received = new_shortfall_rec
+
+        # 4. Recalculate Totals
+        # Total Cash = (Initial DD Locked) + (Shortfall Recovered)
+        initial = record.Payment_DD_Received or 0.0
+        recovery = record.shortfall_received or 0.0
+        total_received = initial + recovery
+
+        expected = record.Payment_DD or 0.0
+        new_shortfall = expected - total_received
+
+        # 5. Update Computed Columns
+        record.Payment_Shortfall = new_shortfall
+
+        # Update 'has_dues' flag based on the new balance
+        record.has_dues = True if new_shortfall > 0 else False
+
         db.commit()
-        
+
     except Exception as e:
         db.rollback()
         st.error(f"Error updating record {record_id}: {e}")

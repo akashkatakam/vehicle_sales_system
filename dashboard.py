@@ -30,7 +30,7 @@ if check_login():
         
         # A. Date Range Filter
         min_d, max_d = data['Timestamp'].min().date(), data['Timestamp'].max().date()
-        min_d = min_d.replace(day=1)
+        min_d = max_d.replace(day=1)
         dates = st.date_input("Date Range", [min_d, max_d], min_value=min_d, max_value=max_d)
         
         # B. Branch Filter
@@ -82,9 +82,7 @@ if check_login():
     
     if "Owner" in user_roles:
         render_owner_view(filtered_data)
-        # Owners also often want to see the Insurance queue, so we can append it or check tabs.
-        # For now, following the original structure where Owner sees specific analytics.
-        
+
     elif "Back Office" in user_roles:
         render_backoffice_view(filtered_data)
         
