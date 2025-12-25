@@ -67,13 +67,13 @@ def render_metrics(data, role):
             cols[0].metric("Total invoice/TR Pending", f"{total_tr_pending_count}")
             cols[1].metric("Insurance Pending", f"{total_insurance_pending_count:,.0f}")
             cols[2].metric("Plates received", f"{total_plates_received:,.0f}")
-            
+
 def render_owner_view(data):
     """Renders the comprehensive 3-tab view for owners."""
     t1, t2, t3 = st.tabs(["💰 Financials", "🚗 Analytics", "📝 Data Entry"])
     with t1:
         c_left, c_right = st.columns([3, 2])
-        
+
         with c_left:
             with st.container(border=True):
                 st.subheader("Summary by Branch")
@@ -85,11 +85,132 @@ def render_owner_view(data):
                 bdisp['Rev'] = bdisp['Rev'].apply(lambda x: f"₹{(x)}")
                 bdisp['Pending'] = bdisp['Pending'].apply(lambda x: f"₹{(x)}")
                 st.dataframe(bdisp, use_container_width=True, hide_index=True)
-        
+
         with c_right:
              with st.container(border=True):
                 render_banker_table(data)
 
+        with st.container(border=True):
+            c_head, c_sel = st.columns([1, 2])
+            with c_head:
+                st.subheader("🧩 Net Collections Analysis")
+            # 1. Map Logic
+            comp_map = {
+                "HC": "price_hc",
+                "Accessories": "price_accessories",
+                "PR Fees": "price_pr",
+                "Fin. Incentive": "Charge_Incentive",
+                "HP Fees": "Charge_HP_Fee",
+                "Ext. Warranty": "price_ew",
+                "Discounts": "Discount_Given"  # <-- Added Discounts
+            }
+
+            # 2. Multiselect
+            # Default selection now includes Discounts for a "True Net" view
+            default_opts = ["HC", "Accessories", "PR Fees", "Fin. Incentive", "HP Fees", "Discounts"]
+
+            with c_sel:
+                selected_labels = st.multiselect(
+                    "Include Components:",
+                    options=list(comp_map.keys()),
+                    default=default_opts,
+                    key="owner_comp_select",
+                    label_visibility="collapsed"
+                )
+
+            if selected_labels:
+                # Resolve Columns
+                selected_cols = [comp_map[label] for label in selected_labels]
+                valid_cols = [c for c in selected_cols if c in data.columns]
+
+                if valid_cols:
+                    # 3. Prepare Data
+                    df_calc = data[['Branch_Name'] + valid_cols].copy()
+                    df_calc[valid_cols] = df_calc[valid_cols].fillna(0.0)
+
+                    # 4. Group
+                    grouped = df_calc.groupby('Branch_Name')[valid_cols].sum().reset_index()
+
+                    # 5. Calculate Dynamic Total
+                    # Logic: Sum everything, BUT subtract Discounts if they are selected
+
+                    # Identify 'Add' vs 'Subtract' columns from the SELECTION
+                    cols_to_add = [c for c in valid_cols if c != 'Discount_Given']
+                    cols_to_sub = [c for c in valid_cols if c == 'Discount_Given']
+
+                    # Start with 0
+                    total_series = pd.Series(0.0, index=grouped.index)
+
+                    if cols_to_add:
+                        total_series += grouped[cols_to_add].sum(axis=1)
+                    if cols_to_sub:
+                        total_series -= grouped[cols_to_sub].sum(axis=1)
+
+                    grouped['Total'] = total_series
+
+                    # 6. Grand Total Row
+                    grand_sums = grouped[valid_cols + ['Total']].sum()
+                    total_row = pd.DataFrame(grand_sums).T
+                    total_row['Branch_Name'] = 'GRAND TOTAL'
+
+                    final_df = pd.concat([grouped, total_row], ignore_index=True)
+
+                    # 7. Formatting
+                    fmt_cols = ['Total'] + valid_cols
+                    for col in fmt_cols:
+                        final_df[col] = final_df[col].apply(lambda x: f"₹{x:,.0f}")
+
+                    # 8. Rename Headers
+                    reverse_map = {v: k for k, v in comp_map.items()}
+                    final_df.rename(columns=reverse_map, inplace=True)
+
+                    # 9. Reorder Display
+                    # Ensure Branch -> Total -> [Selected]
+                    display_cols = ['Branch_Name'] + [reverse_map[c] for c in valid_cols] + ['Total']
+                    final_view = final_df[display_cols].rename(columns={'Branch_Name': 'Branch'})
+
+                    st.dataframe(final_view, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Selected columns not found in database.")
+            else:
+                st.info("Select at least one component to view the table.")
+        # --- TABLE 2: Banker Performance ---
+        with st.container(border=True):
+            st.subheader("Banker Performance")
+
+            # Filter out empty bankers
+            banker_data = data[data['Banker_Name'].notna() & (data['Banker_Name'] != '')].copy()
+
+            if not banker_data.empty:
+                # Calculate Total Income (Incentive + HP)
+                banker_data['Total_Income'] = banker_data['Charge_Incentive'].fillna(0) + banker_data[
+                    'Charge_HP_Fee'].fillna(0)
+
+                # Group Stats
+                banker_stats = banker_data.groupby('Banker_Name').agg(
+                    Files=('id', 'count'),
+                    Funded=('Payment_DD', 'sum'),
+                    Income=('Total_Income', 'sum'),
+                    Average=('Total_Income', 'mean'),
+                ).reset_index().sort_values('Files', ascending=False)
+
+                # Format
+                banker_stats['Funded'] = banker_stats['Funded'].apply(lambda x: f"₹{x:,.0f}")
+                banker_stats['Income'] = banker_stats['Income'].apply(lambda x: f"₹{x:,.0f}")
+
+                st.dataframe(
+                    banker_stats,
+                    column_config={
+                        "Banker_Name": "Banker",
+                        "Files": st.column_config.NumberColumn("Files"),
+                        "Funded": st.column_config.TextColumn("Funded Amt"),
+                        "Income": st.column_config.TextColumn("Inc + HP")
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("No banker data available.")
     # --- TAB 2: Analytics ---
     with t2:
         with st.container(border=True):
