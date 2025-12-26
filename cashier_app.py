@@ -25,7 +25,8 @@ def main():
         cashier_ui.render_entry_form(selected_branch_id, selected_date)
 
     with tab2:
-        cashier_ui.render_import_tab(selected_branch_id)
+        # --- UPDATED: Pass selected_date (Working Date) here ---
+        cashier_ui.render_import_tab(selected_branch_id, selected_date)
 
     with tab3:
         cashier_ui.render_daybook(selected_branch_id, selected_date)
