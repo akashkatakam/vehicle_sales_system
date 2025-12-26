@@ -4,3 +4,5 @@ streamlit
 solara
 reportlab
 streamlit-local-storage
+pytz
+pandas

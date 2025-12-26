@@ -281,6 +281,32 @@ class VehicleMaster(Base):
     sale_record = relationship("SalesRecord", back_populates="vehicle")
 
 
+class CashierTransaction(Base):
+    __tablename__ = "cashier_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+    transaction_type = Column(String(20), nullable=False)  # 'Receipt', 'Voucher'
+    category = Column(String(50), nullable=False)
+    payment_mode = Column(String(20), nullable=False)
+
+    amount = Column(Float, nullable=False)
+    description = Column(String(255))
+
+    branch_id = Column(String(10), ForeignKey("branches.Branch_ID"), nullable=False)
+    party_name = Column(String(100), nullable=True)
+
+    # --- NEW FIELDS ---
+    # Link to the Sales Record (Delivery Challan)
+    dc_number = Column(String(15), ForeignKey("sales_records.DC_Number"), nullable=True)
+
+    # ID of the original transaction if imported from another branch
+    imported_from_id = Column(Integer, nullable=True)
+
+    branch = relationship("Branch")
+    sale_record = relationship("SalesRecord")  # Relationship to fetch Customer Name etc.
 # --- 5. USER AUTHENTICATION ---
 
 class User(Base):
