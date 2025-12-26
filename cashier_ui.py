@@ -34,46 +34,48 @@ def render_entry_form(branch_id: str, selected_date: date):
         is_cash_sale = (sale_rec.Banker_Name == "N/A (Cash Sale)")
 
         if is_cash_sale:
-            display_label = "Total Sale Value"
-            display_amount = sale_rec.Price_Negotiated_Final
+            info_str = f"Total Sale Value: **₹{sale_rec.Price_Negotiated_Final:,.2f}**"
         else:
-            display_label = "Down Payment Due"
-            display_amount = sale_rec.Payment_DownPayment
+            dd_exp = sale_rec.Payment_DD or 0
+            dd_rec = sale_rec.Payment_DD_Received or 0
+            dd_due = dd_exp - dd_rec
+            info_str = (
+                f"Down Payment Due: **₹{sale_rec.Payment_DownPayment:,.2f}** | "
+                f"DD Amount Due: **₹{dd_due:,.2f}**"
+            )
 
-        st.info(
-            f"✅ Found: **{sale_rec.Customer_Name}** | Model: {sale_rec.Model} | {display_label}: **₹{display_amount:,.2f}**"
-        )
+        st.info(f"✅ Found: **{sale_rec.Customer_Name}** | Model: {sale_rec.Model} | {info_str}")
         linked_dc_number = sale_rec.DC_Number
         default_party = sale_rec.Customer_Name
         default_desc = f"Payment for {sale_rec.Model} ({sale_rec.Variant})"
         is_dc_linked = True
 
-    # --- MOVED OUTSIDE FORM: Transaction Type & Category ---
+    # --- Transaction Type & Category ---
     col_ctrl_1, col_ctrl_2 = st.columns(2)
 
     with col_ctrl_1:
         txn_type = st.radio("Type", ["Receipt", "Voucher"], horizontal=True)
 
-    # Calculate Options based on Type
     default_cat_index = 0
     if txn_type == "Receipt":
-        category_opts = ["General Receipt", "Branch Receipt", "Service", "FCI", "Vehicle Sale", "Spares"]
+        category_opts = [
+            "DD Received", "Vehicle Sale", "TA", "Accessories Sale",
+            "Service", "GST Finance", "Others Vehicle Sale"
+        ]
         if is_dc_linked:
             try:
                 default_cat_index = category_opts.index("Vehicle Sale")
             except ValueError:
                 default_cat_index = 0
     else:
-        # Bank Deposit is a common non-expense voucher
-        category_opts = ["General Expense", "Fuel", "Salary", "Maintenance", "Branch Transfer", "Bank Deposit"]
+        category_opts = [
+            "General Expenses", "Petrol", "Godown to Honda Transport",
+            "Sadar", "Staff Vouchers", "Bank Deposit",
+            "Ayodhya", "Service Branch", "General"
+        ]
 
     with col_ctrl_2:
-        category = st.selectbox(
-            "Category",
-            category_opts,
-            index=default_cat_index,
-            key=f"cat_{txn_type}"
-        )
+        category = st.selectbox("Category", category_opts, index=default_cat_index, key=f"cat_{txn_type}")
 
     # --- ENTRY FORM ---
     with st.form("entry_form", clear_on_submit=True):
@@ -82,28 +84,20 @@ def render_entry_form(branch_id: str, selected_date: date):
         with col1:
             party_name = st.text_input("Party / Source Name", value=default_party)
 
-            # --- DYNAMIC CONFIGURATION ---
             generate_receipt_no = True
-            is_expense = True
+            is_expense = False
 
             if txn_type == "Receipt":
-                # Checkbox logic for Receipts
-                default_chk_val = False if category == "Service" else True
+                is_expense = False
+                no_receipt_no_cats = ["Accessories Sale", "Service", "GST Finance", "Others Vehicle Sale"]
+                default_chk_val = False if category in no_receipt_no_cats else True
                 generate_receipt_no = st.checkbox(
-                    "Generate Receipt Number",
-                    value=default_chk_val,
-                    key=f"chk_rcpt_{category}",
-                    help="Uncheck if this receipt does not require an official sequence number."
+                    "Generate Receipt Number", value=default_chk_val, key=f"chk_rcpt_{category}"
                 )
             else:
-                # Checkbox logic for Vouchers
-                # If 'Bank Deposit' or 'Branch Transfer', default Expense to False
-                default_exp_val = False if category in ["Bank Deposit", "Branch Transfer"] else True
+                default_exp_val = False if category == "Bank Deposit" else True
                 is_expense = st.checkbox(
-                    "Book as Actual Expense",
-                    value=default_exp_val,
-                    key=f"chk_exp_{category}",
-                    help="Uncheck if this is just a money transfer (e.g. Bank Deposit) and not a P&L expense."
+                    "Book as Actual Expense", value=default_exp_val, key=f"chk_exp_{category}"
                 )
 
         with col2:
@@ -124,7 +118,6 @@ def render_entry_form(branch_id: str, selected_date: date):
                     "party_name": party_name,
                     "dc_number": linked_dc_number,
                     "generate_receipt_no": generate_receipt_no,
-                    # Pass the expense flag
                     "is_expense": is_expense
                 }
                 success, msg = cashier_logic.add_transaction(db, data)
@@ -139,11 +132,8 @@ def render_entry_form(branch_id: str, selected_date: date):
 
 
 def render_import_tab(current_branch_id: str, working_date: date):
-    """New Tab to import data from other branches."""
     st.subheader(f"📥 Import Branch Daybook (Booking Date: {working_date.strftime('%d-%b-%Y')})")
-
     db = next(get_db())
-
     branches = db.query(models.Branch).filter(models.Branch.Branch_ID != current_branch_id).all()
     branch_opts = {b.Branch_Name: b.Branch_ID for b in branches}
 
@@ -199,17 +189,12 @@ def render_import_tab(current_branch_id: str, working_date: date):
 
 
 def render_daybook(branch_id: str, selected_date: date):
-    """Renders the daybook view with opening/closing balances."""
     st.subheader(f"Daybook: {selected_date.strftime('%d-%b-%Y')}")
-
     db = next(get_db())
-
     view_mode = st.radio("View Mode:", ["Cash Only", "Online/Card", "All"], horizontal=True)
-
     db_filter = "Cash" if view_mode == "Cash Only" else ("Online" if view_mode == "Online/Card" else None)
     opening_bal = cashier_logic.get_opening_balance(db, branch_id, selected_date, mode=db_filter)
     transactions = cashier_logic.get_daybook_transactions(db, branch_id, selected_date)
-
     db.close()
 
     if view_mode == "Cash Only":
@@ -217,24 +202,16 @@ def render_daybook(branch_id: str, selected_date: date):
     elif view_mode == "Online/Card":
         transactions = [t for t in transactions if t.payment_mode in ["Online", "Card"]]
 
-    # Metrics
     total_credits = sum(t.amount for t in transactions if t.transaction_type == "Receipt")
     total_debits = sum(t.amount for t in transactions if t.transaction_type == "Voucher")
-
-    # NEW: Calculate 'Actual Expenses' based on the flag
-    # Note: 'is_expense' might be None for old records, treat as True (default)
     actual_expenses = sum(
         t.amount for t in transactions if t.transaction_type == "Voucher" and t.is_expense is not False)
-
     closing_bal = opening_bal + total_credits - total_debits
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Opening", f"₹{opening_bal:,.2f}")
     c2.metric("Receipts (+)", f"₹{total_credits:,.2f}")
-
-    # Split Voucher Metric
     c3.metric("Vouchers (-)", f"₹{total_debits:,.2f}", help=f"Actual Expenses: ₹{actual_expenses:,.2f}")
-
     c4.metric("Closing", f"₹{closing_bal:,.2f}", delta=closing_bal - opening_bal)
 
     if transactions:
@@ -257,7 +234,7 @@ def render_daybook(branch_id: str, selected_date: date):
 
 
 def render_ledger(branch_id: str):
-    """Renders the ledger with date range selection and separated views."""
+    """Renders the ledger with PDF generation."""
     st.subheader("General Ledger")
 
     c1, c2 = st.columns(2)
@@ -267,85 +244,57 @@ def render_ledger(branch_id: str):
     if st.button("Generate Ledger"):
         db = next(get_db())
         transactions = cashier_logic.get_ledger_transactions(db, branch_id, start_date, end_date)
-        initial_balance = cashier_logic.get_opening_balance(db, branch_id, start_date)
+        initial_balance_cash = cashier_logic.get_opening_balance(db, branch_id, start_date, mode="Cash")
         db.close()
 
-        tab_all, tab_receipts, tab_vouchers = st.tabs(["All Transactions", "Receipts", "Vouchers"])
+        # 1. Generate PDF (Logic moved to cashier_logic)
+        pdf_buffer = cashier_logic.generate_pdf_ledger(
+            branch_id, start_date, end_date, initial_balance_cash, transactions
+        )
 
-        # 1. ALL TRANSACTIONS
-        with tab_all:
-            rows = []
-            running_bal = initial_balance
-            rows.append({
-                "Date": start_date, "Ref No": "-", "Category": "OPENING BALANCE", "Description": "-",
-                "Mode": "-", "Credit": 0, "Debit": 0, "Balance": running_bal
+        # 2. Download Button
+        st.divider()
+        st.download_button(
+            label="📄 Download PDF Ledger (A4 Landscape)",
+            data=pdf_buffer,
+            file_name=f"Ledger_{branch_id}_{start_date}_{end_date}.pdf",
+            mime="application/pdf",
+            type="primary"
+        )
+        st.divider()
+
+        # 3. On-Screen Display
+        rows_screen = []
+        running_bal = initial_balance_cash
+        rows_screen.append({
+            "Date": start_date, "Ref No": "-", "Category": "OP BAL (Cash)",
+            "Description": "-", "Mode": "-", "Credit": 0, "Debit": 0, "Balance": running_bal
+        })
+
+        for t in transactions:
+            credit = t.amount if t.transaction_type == "Receipt" else 0
+            debit = t.amount if t.transaction_type == "Voucher" else 0
+            if t.payment_mode == "Cash":
+                running_bal = running_bal + credit - debit
+
+            ref_no = t.receipt_number if t.transaction_type == 'Receipt' else (
+                t.voucher_number if t.transaction_type == 'Voucher' else '-')
+            desc_text = f"{t.party_name or ''} {t.description or ''}".strip()
+            if t.dc_number: desc_text = f"(DC: {t.dc_number}) {desc_text}"
+
+            rows_screen.append({
+                "Date": t.date, "Ref No": ref_no, "Category": t.category,
+                "Description": desc_text, "Mode": t.payment_mode,
+                "Credit": credit, "Debit": debit, "Balance": running_bal
             })
 
-            for t in transactions:
-                credit = t.amount if t.transaction_type == "Receipt" else 0
-                debit = t.amount if t.transaction_type == "Voucher" else 0
-                running_bal = running_bal + credit - debit
-                ref_no = t.receipt_number if t.transaction_type == 'Receipt' else (
-                    t.voucher_number if t.transaction_type == 'Voucher' else '-')
+        df_all = pd.DataFrame(rows_screen)
+        tab_all, tab_receipts, tab_vouchers = st.tabs(["All Transactions", "Receipts", "Vouchers"])
 
-                rows.append({
-                    "Date": t.date, "Ref No": ref_no, "Category": t.category,
-                    "Description": f"{t.party_name or ''} {t.description or ''}",
-                    "Mode": t.payment_mode, "Credit": credit, "Debit": debit, "Balance": running_bal
-                })
-
-            st.dataframe(
-                pd.DataFrame(rows),
-                use_container_width=True, hide_index=True,
-                column_config={"Date": st.column_config.DateColumn(format="DD-MM-YYYY")}
-            )
-
-        # 2. RECEIPTS ONLY
+        with tab_all:
+            st.dataframe(df_all, use_container_width=True, hide_index=True,
+                         column_config={"Date": st.column_config.DateColumn(format="DD-MM-YYYY")})
         with tab_receipts:
-            receipts = [t for t in transactions if t.transaction_type == "Receipt"]
-            if receipts:
-                df_r = pd.DataFrame([{
-                    "Date": t.date, "Receipt No": t.receipt_number, "Category": t.category,
-                    "Party": t.party_name, "Mode": t.payment_mode, "Amount": t.amount, "Description": t.description
-                } for t in receipts])
-
-                total_r = sum(r.amount for r in receipts)
-                st.metric("Total Receipts", f"₹{total_r:,.2f}")
-                st.dataframe(df_r, use_container_width=True, hide_index=True,
-                             column_config={"Date": st.column_config.DateColumn(format="DD-MM-YYYY")})
-            else:
-                st.info("No Receipts found in this period.")
-
-        # 3. VOUCHERS ONLY (Split by Actual Expense vs Other)
+            st.dataframe(df_all[df_all['Credit'] > 0], use_container_width=True, hide_index=True)
         with tab_vouchers:
-            vouchers = [t for t in transactions if t.transaction_type == "Voucher"]
-            if vouchers:
-                # Calculate metrics based on is_expense flag
-                total_actual_expenses = sum(v.amount for v in vouchers if v.is_expense is not False)
-                total_other_outflows = sum(v.amount for v in vouchers if v.is_expense is False)
-                total_all_vouchers = total_actual_expenses + total_other_outflows
-
-                # Display Metrics
-                vm1, vm2, vm3 = st.columns(3)
-                vm1.metric("Actual Expenses", f"₹{total_actual_expenses:,.2f}", help="Vouchers marked as Expense")
-                vm2.metric("Other Outflows", f"₹{total_other_outflows:,.2f}", help="Bank Deposits, Transfers, etc.")
-                vm3.metric("Total Outflow", f"₹{total_all_vouchers:,.2f}")
-
-                df_v = pd.DataFrame([{
-                    "Date": t.date,
-                    "Voucher No": t.voucher_number,
-                    "Category": t.category,
-                    "Expense?": "✅" if t.is_expense is not False else "❌",
-                    "Party": t.party_name,
-                    "Mode": t.payment_mode,
-                    "Amount": t.amount,
-                    "Description": t.description
-                } for t in vouchers])
-
-                st.dataframe(
-                    df_v,
-                    use_container_width=True, hide_index=True,
-                    column_config={"Date": st.column_config.DateColumn(format="DD-MM-YYYY")}
-                )
-            else:
-                st.info("No Vouchers found in this period.")
+            st.dataframe(df_all[df_all['Debit'] > 0], use_container_width=True, hide_index=True)
