@@ -1,4 +1,5 @@
 # cashier_logic.py
+from decimal import Decimal
 
 from sqlalchemy import func, case, and_, not_
 from sqlalchemy.orm import Session
@@ -29,10 +30,14 @@ def get_opening_balance(db: Session, branch_id: str, target_date: date, mode: st
     )
 
     if mode:
-        query = query.filter(models.CashierTransaction.payment_mode == mode)
+        if isinstance(mode, (list, tuple)):
+            query = query.filter(models.CashierTransaction.payment_mode.in_(mode))
+        else:
+            # This handles the "Cash" string
+            query = query.filter(models.CashierTransaction.payment_mode == mode)
 
     balance = query.scalar()
-    return balance if balance else 0.0
+    return balance if balance else Decimal(0)
 
 
 def get_daybook_transactions(db: Session, branch_id: str, selected_date: date):
@@ -65,6 +70,7 @@ def add_transaction(db: Session, data: dict):
         success_msg = "Success"
         txn_type = data.get('transaction_type')
         branch_id = data.get('branch_id')
+        category = data.get('category')  # Get the category
 
         generate_receipt = data.pop('generate_receipt_no', True)
 
@@ -74,11 +80,20 @@ def add_transaction(db: Session, data: dict):
             if generate_receipt:
                 branch = db.query(models.Branch).filter(models.Branch.Branch_ID == branch_id).with_for_update().first()
                 if branch:
-                    current_num = branch.Receipt_Last_Number if branch.Receipt_Last_Number else 0
-                    next_num = current_num + 1
-                    branch.Receipt_Last_Number = next_num
-                    data['receipt_number'] = next_num
-                    success_msg = f"Success! Receipt No: {next_num}"
+                    if category == "Branch Receipt":
+                        # --- NEW LOGIC FOR BRANCH RECEIPT SERIES ---
+                        current_num = branch.Branch_Receipt_Last_Number if branch.Branch_Receipt_Last_Number else 0
+                        next_num = current_num + 1
+                        branch.Branch_Receipt_Last_Number = next_num
+                        data['receipt_number'] = next_num
+                        success_msg = f"Success! Branch Receipt No: {next_num}"
+                    else:
+                        # --- EXISTING LOGIC FOR STANDARD RECEIPTS ---
+                        current_num = branch.Receipt_Last_Number if branch.Receipt_Last_Number else 0
+                        next_num = current_num + 1
+                        branch.Receipt_Last_Number = next_num
+                        data['receipt_number'] = next_num
+                        success_msg = f"Success! Receipt No: {next_num}"
             else:
                 data['receipt_number'] = None
                 success_msg = "Success (No Receipt No.)"

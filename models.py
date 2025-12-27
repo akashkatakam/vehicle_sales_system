@@ -1,7 +1,7 @@
 from typing import final
 from sqlalchemy import (
     Boolean, Column, Enum, Integer, String, Float,
-    ForeignKey, DateTime, UniqueConstraint, Date, Index
+    ForeignKey, DateTime, UniqueConstraint, Date, Index, Numeric
 )
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
@@ -58,6 +58,9 @@ class Branch(Base):
     # Counters
     Receipt_Last_Number = Column(Integer, default=0, nullable=False)
     Voucher_Last_Number = Column(Integer, default=0, nullable=False)
+    Branch_Receipt_Last_Number = Column(Integer, default=0, nullable=False)
+    Job_Card_Last_Number = Column(Integer, default=0, nullable=False)
+    Out_Bill_Last_Number = Column(Integer, default=0, nullable=False)
 
     Pricing_Adjustment = Column(Float, default=0.0)
     Firm_ID_1 = Column(Integer, ForeignKey("firm_master.Firm_ID"))
@@ -249,7 +252,7 @@ class CashierTransaction(Base):
     category = Column(String(50), nullable=False)
     payment_mode = Column(String(20), nullable=False)
 
-    amount = Column(Float, nullable=False)
+    amount = Column(Numeric(12, 2), nullable=False)
     description = Column(String(255))
 
     branch_id = Column(String(10), ForeignKey("branches.Branch_ID"), nullable=False)

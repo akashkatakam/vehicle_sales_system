@@ -57,23 +57,38 @@ def render_entry_form(branch_id: str, selected_date: date):
         txn_type = st.radio("Type", ["Receipt", "Voucher"], horizontal=True)
 
     default_cat_index = 0
+
     if txn_type == "Receipt":
-        category_opts = [
-            "DD Received", "Vehicle Sale", "TA", "Accessories Sale",
+        # 1. Define the full list of options (including the new "Branch Receipt")
+        all_receipt_opts = [
+            "General Receipt","Branch Receipt", "DD Received", "Vehicle Sale", "TA", "Accessories Sale",
             "Service", "GST Finance", "Others Vehicle Sale"
         ]
+        if branch_id != "1":
+            all_receipt_opts.extend(["Job Card Sale", "Out Bill Sale"])
+
+        # 2. Apply Logic: If a DC is linked, restrict the options
+        if is_dc_linked:
+            # User specified strict list for Linked DCs
+            category_opts = ["Vehicle Sale", "DD Received", "Others Vehicle Sale"]
+        else:
+            # Otherwise show everything
+            category_opts = all_receipt_opts
+
+        # 3. Set Default Selection
         if is_dc_linked:
             try:
+                # Default to Vehicle Sale if available
                 default_cat_index = category_opts.index("Vehicle Sale")
             except ValueError:
                 default_cat_index = 0
     else:
+        # Voucher categories remain unchanged
         category_opts = [
             "General Expenses", "Petrol", "Godown to Honda Transport",
             "Sadar", "Staff Vouchers", "Bank Deposit",
             "Ayodhya", "Service Branch", "General"
         ]
-
     with col_ctrl_2:
         category = st.selectbox("Category", category_opts, index=default_cat_index, key=f"cat_{txn_type}")
 
@@ -134,7 +149,8 @@ def render_entry_form(branch_id: str, selected_date: date):
 def render_import_tab(current_branch_id: str, working_date: date):
     st.subheader(f"📥 Import Branch Daybook (Booking Date: {working_date.strftime('%d-%b-%Y')})")
     db = next(get_db())
-    branches = db.query(models.Branch).filter(models.Branch.Branch_ID != current_branch_id).all()
+    branches = db.query(models.Branch).filter(models.Branch.Branch_ID != current_branch_id,
+                                              models.Branch.dc_gen_enabled ==True).all()
     branch_opts = {b.Branch_Name: b.Branch_ID for b in branches}
 
     col1, col2, col3 = st.columns(3)
@@ -192,15 +208,29 @@ def render_daybook(branch_id: str, selected_date: date):
     st.subheader(f"Daybook: {selected_date.strftime('%d-%b-%Y')}")
     db = next(get_db())
     view_mode = st.radio("View Mode:", ["Cash Only", "Online/Card", "All"], horizontal=True)
-    db_filter = "Cash" if view_mode == "Cash Only" else ("Online" if view_mode == "Online/Card" else None)
+    # 1. Prepare DB Filter (for Opening Balance)
+    if view_mode == "Cash Only":
+        db_filter = "Cash"
+    elif view_mode == "Online/Card":
+        db_filter = ["Online", "Card"]
+    else:
+        db_filter = None
+
     opening_bal = cashier_logic.get_opening_balance(db, branch_id, selected_date, mode=db_filter)
     transactions = cashier_logic.get_daybook_transactions(db, branch_id, selected_date)
     db.close()
 
+    # 2. Filter Transactions for Display (Robust Logic)
     if view_mode == "Cash Only":
-        transactions = [t for t in transactions if t.payment_mode == "Cash"]
+        transactions = [
+            t for t in transactions
+            if t.payment_mode and t.payment_mode.strip().title() == "Cash"
+        ]
     elif view_mode == "Online/Card":
-        transactions = [t for t in transactions if t.payment_mode in ["Online", "Card"]]
+        transactions = [
+            t for t in transactions
+            if t.payment_mode and t.payment_mode.strip().title() in ["Online", "Card"]
+        ]
 
     total_credits = sum(t.amount for t in transactions if t.transaction_type == "Receipt")
     total_debits = sum(t.amount for t in transactions if t.transaction_type == "Voucher")
