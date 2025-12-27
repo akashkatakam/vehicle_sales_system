@@ -3,17 +3,12 @@ from sqlalchemy import (
     Boolean, Column, Enum, Integer, String, Float,
     ForeignKey, DateTime, UniqueConstraint, Date, Index, Numeric
 )
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy.orm import relationship
 from datetime import datetime
 import hashlib
 import os
-import pytz
-
-# Define IST timezone as a fallback
-IST_TIMEZONE = pytz.timezone('Asia/Kolkata')
-
-# Use a single Base for the entire application
-from database import Base
+from utils import IST_TIMEZONE # Updated import
+from core.database import Base # Updated import
 
 
 # --- ENUMS (Centralized) ---

@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
-from database import get_db
-from data_manager import update_dd_payment, update_insurance_tr_status
-import charts
+from core.database import get_db
+from core.data_manager import update_dd_payment, update_insurance_tr_status
+from features.dashboard import charts # Updated import
+
 
 BASE_WA_URL = "https://wa.me/"
 

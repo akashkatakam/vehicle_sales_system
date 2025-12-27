@@ -1,33 +1,24 @@
-# cashier_ui.py
-
 import streamlit as st
-import time  # <--- NEW IMPORT
+import time
 from datetime import date
-import cashier_logic
-from database import get_db
+from features.cashier import logic as cashier_logic # Updated Import
+from core.database import get_db # Updated Import
+from core import models # Updated Import
 import pandas as pd
-import models
 
-# --- PERFORMANCE FIX: CACHING THE DC LOOKUP ---
-@st.cache_data(ttl=120)  # Cache data for 120 seconds to speed up reloads
+# --- CACHED DC LOOKUP ---
+@st.cache_data(ttl=30)
 def get_cached_branch_records(branch_id: str):
     """
     Fetches sales records and converts them to a dictionary for fast lookup.
-    Prevents re-querying the DB on every page interaction.
     """
     db = next(get_db())
     try:
-        # Fetch records
         branch_records = cashier_logic.get_all_sales_records_by_branch(db, branch_id)
 
-        # Convert SQLAlchemy objects to a pure Python dictionary (cache-friendly)
-        # We Map "Customer Name | DC Number" -> Record Data
         record_map = {}
         for r in branch_records:
-            # Create a label for the dropdown
             label = f"{r.Customer_Name} | {r.DC_Number}"
-
-            # Store essential data needed for the UI
             record_map[label] = {
                 "DC_Number": r.DC_Number,
                 "Customer_Name": r.Customer_Name,
@@ -47,11 +38,8 @@ def get_cached_branch_records(branch_id: str):
 def render_entry_form(branch_id: str, selected_date: date):
     st.subheader("Enter Receipt or Voucher")
 
-    # --- 1. OPTIMIZED DC LOOKUP ---
-    # Use the cached function instead of hitting DB directly
+    # --- 1. DC LOOKUP ---
     record_map = get_cached_branch_records(branch_id)
-
-    # Add "None" option and sort the rest
     options = ["None"] + list(record_map.keys())
 
     selected_option = st.selectbox(
@@ -68,7 +56,7 @@ def render_entry_form(branch_id: str, selected_date: date):
     is_dc_linked = False
 
     if selected_option != "None":
-        sale_data = record_map[selected_option]  # Access dict data
+        sale_data = record_map[selected_option]
 
         is_cash_sale = (sale_data["Banker_Name"] == "N/A (Cash Sale)")
 
@@ -97,9 +85,10 @@ def render_entry_form(branch_id: str, selected_date: date):
 
     default_cat_index = 0
     if txn_type == "Receipt":
-        # Base Options
+        # --- UPDATE: Added "General Receipt" and "Booking Receipt" ---
         category_opts = [
-            "Branch Receipt", "DD Received", "Vehicle Sale", "TA", "Accessories Sale",
+            "Branch Receipt", "General Receipt", "Booking Receipt",
+            "DD Received", "Vehicle Sale", "TA", "Accessories Sale",
             "Service", "GST Finance", "Others Vehicle Sale"
         ]
 
@@ -110,7 +99,7 @@ def render_entry_form(branch_id: str, selected_date: date):
         if is_dc_linked:
             try:
                 # Restrict options if DC is linked
-                category_opts = ["Vehicle Sale", "DD Received", "Others Vehicle Sale"]
+                category_opts = ["Vehicle Sale", "DD Received", "Others Vehicle Sale", "Booking Receipt"]
                 default_cat_index = category_opts.index("Vehicle Sale")
             except ValueError:
                 default_cat_index = 0
@@ -154,7 +143,7 @@ def render_entry_form(branch_id: str, selected_date: date):
 
         if st.form_submit_button("Save Transaction", type="primary"):
             if amount > 0:
-                db = next(get_db())  # Open DB connection for saving
+                db = next(get_db())
                 data = {
                     "date": selected_date,
                     "transaction_type": txn_type,
@@ -169,18 +158,12 @@ def render_entry_form(branch_id: str, selected_date: date):
                     "is_expense": is_expense
                 }
                 success, msg = cashier_logic.add_transaction(db, data)
-                db.close()  # Close DB
+                db.close()
 
                 if success:
-                    # --- NEW LOGIC: POP-UP AND DELAY ---
-                    # 1. Show the success message prominently
                     st.success(f"✅ {msg}")
-
-                    # 2. Add a visual progress bar or spinner to indicate the pause
                     with st.spinner("Saved! Refreshing..."):
-                        time.sleep(1)  # Wait for 1 seconds
-
-                    # 3. Rerun the page to clear form
+                        time.sleep(3)
                     st.rerun()
                 else:
                     st.error(msg)
@@ -324,7 +307,6 @@ def render_ledger(branch_id: str):
             branch_id, start_date, end_date, initial_balance_cash, transactions
         )
 
-        # 2. Download Button
         st.divider()
         st.download_button(
             label="📄 Download PDF Ledger (A4 Landscape)",
@@ -335,18 +317,33 @@ def render_ledger(branch_id: str):
         )
         st.divider()
 
-        # 3. On-Screen Display
+        # 2. On-Screen Display (Sorted by DC)
+        # We manually sort the transactions to match the PDF view
+        # Sort Key: (Is Receipt? 0=Rec 1=Vouch, DC Number (Empty last), Date)
+        sorted_txns = sorted(
+            transactions,
+            key=lambda t: (
+                0 if t.transaction_type == 'Receipt' else 1,
+                str(t.dc_number) if t.dc_number else "zzzz",
+                t.date
+            )
+        )
+
         rows_screen = []
-        running_bal = initial_balance_cash
+        running_bal = initial_balance_cash  # Note: Running Balance visual might look jumpy due to sorting
+
+        # Add Opening Balance Row
         rows_screen.append({
             "Date": start_date, "Ref No": "-", "Category": "OP BAL (Cash)",
             "Description": "-", "Mode": "-", "Credit": 0, "Debit": 0, "Balance": running_bal
         })
 
-        for t in transactions:
+        for t in sorted_txns:
             credit = t.amount if t.transaction_type == "Receipt" else 0
             debit = t.amount if t.transaction_type == "Voucher" else 0
-            if t.payment_mode == "Cash":
+
+            # Update running balance (mathematically correct based on the *displayed* order)
+            if t.payment_mode and t.payment_mode.strip() == "Cash":
                 running_bal = running_bal + credit - debit
 
             ref_no = t.receipt_number if t.transaction_type == 'Receipt' else (
@@ -361,11 +358,22 @@ def render_ledger(branch_id: str):
             })
 
         df_all = pd.DataFrame(rows_screen)
-        tab_all, tab_receipts, tab_vouchers = st.tabs(["All Transactions", "Receipts", "Vouchers"])
+
+        # Display
+        tab_all, tab_receipts, tab_vouchers = st.tabs(["All Transactions (Grouped)", "Receipts", "Vouchers"])
 
         with tab_all:
-            st.dataframe(df_all, use_container_width=True, hide_index=True,
-                         column_config={"Date": st.column_config.DateColumn(format="DD-MM-YYYY")})
+            st.dataframe(
+                df_all,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Date": st.column_config.DateColumn(format="DD-MM-YYYY"),
+                    "Credit": st.column_config.NumberColumn(format="%.2f"),
+                    "Debit": st.column_config.NumberColumn(format="%.2f"),
+                    "Balance": st.column_config.NumberColumn(format="%.2f"),
+                }
+            )
         with tab_receipts:
             st.dataframe(df_all[df_all['Credit'] > 0], use_container_width=True, hide_index=True)
         with tab_vouchers:

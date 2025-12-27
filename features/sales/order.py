@@ -3,16 +3,10 @@
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, letter
 from reportlab.lib.units import inch
-from reportlab.lib.colors import red, black, green
-import pandas as pd
-from typing import Dict, Any, List, Tuple
+from reportlab.lib.colors import red, black
+from typing import Dict, Any, List
 from datetime import datetime
-import pytz
-
-# --- CONSTANTS ---
-GST_RATE_DISPLAY = 18 
-LINE_HEIGHT = 13
-IST_TIMEZONE = pytz.timezone('Asia/Kolkata')
+from utils import IST_TIMEZONE # Updated Import
 
 
 class SalesOrder:

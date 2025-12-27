@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
-from database import get_db
-from data_manager import get_all_sales_records_for_dashboard, get_all_branches
-import models
-from vehicle_config import get_movement_category, get_vehicle_type
+from core.database import get_db # Updated
+from core.data_manager import get_all_sales_records_for_dashboard, get_all_branches # Updated
+from core import models # Updated
+from features.sales.config import get_movement_category, get_vehicle_type # Updated
 
 @st.cache_data(ttl=600)
 def load_dashboard_data(branch_id_filter: str):

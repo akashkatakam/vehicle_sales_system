@@ -1,36 +1,42 @@
-# data_manager.py
-
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, text
-import models
+from core import models  # Updated Import
+from utils import IST_TIMEZONE
 from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
 from datetime import date, datetime
 import streamlit as st
 
-# --- CONFIGURATION READS ---
 
-#@st.cache_data(ttl=3600)
+# --- SHARED ACCESS LOGIC (MOVED HERE) ---
+def get_user_accessible_branches(db: Session, access_list: List[str]) -> List[models.Branch]:
+    """Returns Branch objects based on user access permissions."""
+    if not access_list:
+        return []
+    if "ALL" in access_list:
+        return db.query(models.Branch).filter(models.Branch.dc_gen_enabled == True).all()
+    else:
+        return db.query(models.Branch).filter(models.Branch.Branch_ID.in_(access_list)).all()
+
+
+# --- EXISTING FUNCTIONS ---
+
 def get_all_branches(db: Session) -> List[models.Branch]:
-    """Retrieves all Branch objects for the initial selector."""
     return db.query(models.Branch).all()
 
-#@st.cache_data(ttl=3600)
+
 def get_config_lists_by_branch(db: Session, branch_id: str) -> Dict[str, Any]:
-    """Retrieves all personnel and financiers for a specific branch."""
-    
     executives_db = db.query(models.Executive).filter(models.Executive.Branch_ID == branch_id).all()
-    financiers_db = db.query(models.Financier).all() # Incentives are universal
-    
+    financiers_db = db.query(models.Financier).all()
+
     staff_names = [p.Name for p in executives_db if p.Role == models.ExecutiveRole.SALES]
     executive_names = [p.Name for p in executives_db if p.Role == models.ExecutiveRole.FINANCE]
-    
+
     financier_names = [f.Company_Name for f in financiers_db]
     incentive_rules = {
-        f.Company_Name: {'type': f.Incentive_Type, 'value': f.Incentive_Value} 
+        f.Company_Name: {'type': f.Incentive_Type, 'value': f.Incentive_Value}
         for f in financiers_db if f.Incentive_Type
     }
-                       
     return {
         'staff_names': staff_names,
         'executive_names': executive_names,
@@ -38,32 +44,27 @@ def get_config_lists_by_branch(db: Session, branch_id: str) -> Dict[str, Any]:
         'incentive_rules': incentive_rules,
     }
 
-#@st.cache_data(ttl=3600)
+
 def get_universal_data(db: Session) -> Dict[str, pd.DataFrame]:
-    """Retrieves universal data (Pricing, Firms) as Pandas DataFrames."""
-    
     vehicles_db = db.query(models.VehiclePrice).all()
     firm_db = db.query(models.FirmMaster).all()
-    
+
     def to_dataframe(data):
         if not data: return pd.DataFrame()
         df = pd.DataFrame([item.__dict__ for item in data])
         if '_sa_instance_state' in df.columns:
             df.drop(columns=['_sa_instance_state'], inplace=True)
         return df
-            
+
     return {
         'vehicles': to_dataframe(vehicles_db),
         'firm_master': to_dataframe(firm_db),
     }
 
-#@st.cache_data(ttl=3600)
+
 def get_accessory_package_for_model(db: Session, model_name: str) -> List[Dict[str, Any]]:
-    """Fetches and joins the specific accessory package for a given model."""
     package = db.query(models.AccessoryPackage).filter(models.AccessoryPackage.Model == model_name).first()
-    
-    if not package:
-        return []
+    if not package: return []
 
     accessory_list = []
     for i in range(1, 11):
@@ -78,152 +79,97 @@ def get_accessory_package_for_model(db: Session, model_name: str) -> List[Dict[s
                 })
     return accessory_list
 
+
 def get_branch_sequencing_data(db: Session, branch_id: str, lock: bool = False) -> Optional[models.Branch]:
-    """
-    Retrieves the branch record (with counters).
-    If lock=True, it locks the row (SELECT FOR UPDATE) to prevent race conditions.
-    """
     query = db.query(models.Branch).filter(models.Branch.Branch_ID == branch_id)
-    
     if lock:
-        # This tells the DB: "Don't let anyone else read/write this row until I commit"
         return query.with_for_update().first()
-    
     return query.first()
 
-#@st.cache_data(ttl=600) # Cache data for 10 minutes
+
 def get_all_sales_records_for_dashboard(db: Session, branch_id_filter: str = None) -> pd.DataFrame:
-    """
-    Fetches all sales records. If branch_id_filter is provided,
-    filters the results for that specific branch.
-    """
-    
-    # Start the query
     query = (
         db.query(models.SalesRecord)
         .options(joinedload(models.SalesRecord.branch))
         .order_by(models.SalesRecord.Timestamp.desc())
     )
-    
-    # --- NEW: Apply Branch Filter ---
     if branch_id_filter:
         query = query.filter(models.SalesRecord.Branch_ID == branch_id_filter)
-    
-    # 2. Read directly into Pandas
+
     df = pd.read_sql(query.statement, db.get_bind())
-    
-    # 3. Map Branch_ID to Branch_Name for the charts
-    # We get all branches (this will be cached from the main app)
+
     branches = {b.Branch_ID: b.Branch_Name for b in get_all_branches(db)}
     df['Branch_Name'] = df['Branch_ID'].map(branches)
-    
-    # 4. Convert timestamp to datetime object for filtering
     df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-    
     return df
 
+
 def get_user_by_username(db: Session, username: str) -> Optional[models.User]:
-    """Retrieves a single user by their username."""
     return db.query(models.User).filter(models.User.username == username).first()
 
+
 def get_recent_records_for_reprint(db: Session, branch_id: str, limit: int = 10):
-    """Fetches a lightweight list of recent sales for the reprint dropdown."""
-    return db.query(models.SalesRecord.id, models.SalesRecord.DC_Number, models.SalesRecord.Customer_Name)\
-             .filter(models.SalesRecord.Branch_ID == branch_id)\
-             .order_by(models.SalesRecord.Timestamp.desc())\
-             .limit(limit)\
-             .all()
-# --- TRANSACTION WRITE FUNCTIONS ---
+    return db.query(models.SalesRecord.id, models.SalesRecord.DC_Number, models.SalesRecord.Customer_Name) \
+        .filter(models.SalesRecord.Branch_ID == branch_id) \
+        .order_by(models.SalesRecord.Timestamp.desc()) \
+        .limit(limit) \
+        .all()
+
 
 def update_branch_sequences(db: Session, branch_id: str, new_dc_seq: int, new_acc1_seq: int, new_acc2_seq: int):
-    """
-    Atomically updates the branch's sequence counters in the 'branches' table.
-    """
     try:
         branch = db.query(models.Branch).filter(models.Branch.Branch_ID == branch_id).with_for_update().one()
-        
         branch.DC_Last_Number = new_dc_seq
-        
-        # Only update the counter if a bill was actually generated for that slot
-        if new_acc1_seq > 0:
-            branch.Acc_Inv_1_Last_Number = new_acc1_seq
-        if new_acc2_seq > 0:
-            branch.Acc_Inv_2_Last_Number = new_acc2_seq
-            
-        # db.commit() will be handled by the create_sales_record function
-        
+        if new_acc1_seq > 0: branch.Acc_Inv_1_Last_Number = new_acc1_seq
+        if new_acc2_seq > 0: branch.Acc_Inv_2_Last_Number = new_acc2_seq
     except Exception as e:
         db.rollback()
         raise Exception(f"Atomic sequence update failed: {e}")
 
+
 def create_sales_record(db: Session, record_data: Dict[str, Any]):
-    """Creates a new sales record entry and commits the transaction."""
     try:
-        # 1. Separate sequence data
         branch_id = record_data['Branch_ID']
         new_dc_seq = record_data.pop('DC_Sequence_No')
         new_acc1_seq = record_data['Acc_Inv_1_No']
         new_acc2_seq = record_data['Acc_Inv_2_No']
-        
-        # 2. Create the SalesRecord
+
         db_record = models.SalesRecord(**record_data)
         db.add(db_record)
-        
-        # 3. Update all counters atomically
-        update_branch_sequences(
-            db, branch_id, new_dc_seq, 
-            new_acc1_seq, new_acc2_seq
-        )
-        
+
+        update_branch_sequences(db, branch_id, new_dc_seq, new_acc1_seq, new_acc2_seq)
+
         db.commit()
         db.refresh(db_record)
         return db_record
-        
     except Exception as e:
         db.rollback()
         raise Exception(f"Transaction failed: {e}")
 
+
 def update_dd_payment(db: Session, record_id: int, new_initial_dd: float = None, new_shortfall_rec: float = None):
-    """
-    Updates Initial DD (if provided) and/or Shortfall Recovery (if provided).
-    Recalculates total shortfall automatically.
-    """
     try:
-        # 1. Find the record
         record = db.query(models.SalesRecord).filter(models.SalesRecord.id == record_id).first()
+        if not record: return
 
-        if not record:
-            st.error(f"Record ID {record_id} not found.")
-            return
-
-        # 2. Update Initial DD (Only if a value is passed)
         if new_initial_dd is not None:
             record.Payment_DD_Received = new_initial_dd
-
-        # 3. Update Shortfall Recovery (Only if a value is passed)
         if new_shortfall_rec is not None:
             record.shortfall_received = new_shortfall_rec
 
-        # 4. Recalculate Totals
-        # Total Cash = (Initial DD Locked) + (Shortfall Recovered)
         initial = record.Payment_DD_Received or 0.0
         recovery = record.shortfall_received or 0.0
         total_received = initial + recovery
-
         expected = record.Payment_DD or 0.0
         new_shortfall = expected - total_received
 
-        # 5. Update Computed Columns
         record.Payment_Shortfall = new_shortfall
-
-        # Update 'has_dues' flag based on the new balance
         record.has_dues = True if new_shortfall > 0 else False
-
         db.commit()
-
     except Exception as e:
         db.rollback()
         st.error(f"Error updating record {record_id}: {e}")
+
 
 def log_sale(db: Session, branch_id: str, model: str, var: str, color: str, qty: int, dt: date, rem: str):
     db.add(models.InventoryTransaction(
@@ -234,33 +180,17 @@ def log_sale(db: Session, branch_id: str, model: str, var: str, color: str, qty:
     ))
     db.commit()
 
+
 def update_insurance_tr_status(db: Session, record_id: int, updates: Dict[str, Any]):
-    """
-    Finds a specific sales record by its primary key (id) and updates
-    the insurance/TR boolean flags.
-    
-    'updates' is a dict like {'is_insurance_done': True, 'has_dues': False}
-    """
     try:
-        # 1. Find the record to update
         record = db.query(models.SalesRecord).filter(models.SalesRecord.id == record_id).first()
-        
-        if not record:
-            st.error(f"Record ID {record_id} not found.")
-            return
-        
-        ignore_keys = ['has_dues'] 
-        
+        if not record: return
+
+        ignore_keys = ['has_dues']
         for key, value in updates.items():
             if key not in ignore_keys and hasattr(record, key):
                 setattr(record, key, value)
-        
-        # 3. Update fulfillment status based on progression
-        # We must read the potentially updated values
-
-        # 4. Commit the change
         db.commit()
-        
     except Exception as e:
         db.rollback()
         st.error(f"Error updating record {record_id}: {e}")

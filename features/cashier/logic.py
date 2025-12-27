@@ -1,12 +1,8 @@
-# cashier_logic.py
 from decimal import Decimal
-
-from sqlalchemy import func, case, and_, not_
+from sqlalchemy import func, case, not_
 from sqlalchemy.orm import Session
 from datetime import date
-import models
-
-# --- PDF Generation Imports ---
+from core import models # Updated Import
 import io
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -15,7 +11,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 
-def get_opening_balance(db: Session, branch_id: str, target_date: date, mode: str = None) -> float:
+def get_opening_balance(db: Session, branch_id: str, target_date: date, mode: str = None) -> Decimal:
     """Calculates closing balance of the previous day."""
     query = db.query(
         func.sum(
@@ -30,14 +26,15 @@ def get_opening_balance(db: Session, branch_id: str, target_date: date, mode: st
     )
 
     if mode:
+        # Check if mode is a list (for Online/Card)
         if isinstance(mode, (list, tuple)):
             query = query.filter(models.CashierTransaction.payment_mode.in_(mode))
         else:
-            # This handles the "Cash" string
             query = query.filter(models.CashierTransaction.payment_mode == mode)
 
     balance = query.scalar()
-    return balance if balance else Decimal(0)
+    # Return Decimal(0) instead of 0.0 to prevent type errors
+    return balance if balance is not None else Decimal(0)
 
 
 def get_daybook_transactions(db: Session, branch_id: str, selected_date: date):
@@ -70,7 +67,7 @@ def add_transaction(db: Session, data: dict):
         success_msg = "Success"
         txn_type = data.get('transaction_type')
         branch_id = data.get('branch_id')
-        category = data.get('category')  # Get the category
+        category = data.get('category')
 
         generate_receipt = data.pop('generate_receipt_no', True)
 
@@ -80,7 +77,7 @@ def add_transaction(db: Session, data: dict):
             if generate_receipt:
                 branch = db.query(models.Branch).filter(models.Branch.Branch_ID == branch_id).with_for_update().first()
                 if branch:
-                    # --- Logic for Branch Receipt ---
+                    # 1. Branch Receipt (Specific Series)
                     if category == "Branch Receipt":
                         current_num = branch.Branch_Receipt_Last_Number if branch.Branch_Receipt_Last_Number else 0
                         next_num = current_num + 1
@@ -88,7 +85,7 @@ def add_transaction(db: Session, data: dict):
                         data['receipt_number'] = next_num
                         success_msg = f"Success! Branch Receipt No: {next_num}"
 
-                    # --- NEW LOGIC: Job Card Sale ---
+                    # 2. Job Card (Service) - Non-Branch 1
                     elif category == "Job Card Sale":
                         current_num = branch.Job_Card_Last_Number if branch.Job_Card_Last_Number else 0
                         next_num = current_num + 1
@@ -96,7 +93,7 @@ def add_transaction(db: Session, data: dict):
                         data['receipt_number'] = next_num
                         success_msg = f"Success! Job Card No: {next_num}"
 
-                    # --- NEW LOGIC: Out Bill Sale ---
+                    # 3. Out Bill (Service) - Non-Branch 1
                     elif category == "Out Bill Sale":
                         current_num = branch.Out_Bill_Last_Number if branch.Out_Bill_Last_Number else 0
                         next_num = current_num + 1
@@ -104,7 +101,7 @@ def add_transaction(db: Session, data: dict):
                         data['receipt_number'] = next_num
                         success_msg = f"Success! Out Bill No: {next_num}"
 
-                    # --- Standard Receipts ---
+                    # 4. Standard Receipt Series (Default)
                     else:
                         current_num = branch.Receipt_Last_Number if branch.Receipt_Last_Number else 0
                         next_num = current_num + 1
@@ -195,7 +192,7 @@ def import_transactions(db: Session, transaction_ids: list, target_branch_id: st
 
 
 def generate_pdf_ledger(branch_id, start_date, end_date, initial_cash, transactions):
-    """Generates a T-Format Ledger PDF using ReportLab with Full Columns."""
+    """Generates a T-Format Ledger PDF with Grouping & Subtotals on the Receipts Side."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -211,99 +208,127 @@ def generate_pdf_ledger(branch_id, start_date, end_date, initial_cash, transacti
 
     # Custom Styles
     style_title = ParagraphStyle('Title', parent=styles['Heading2'], alignment=1, fontSize=12)
-    # Using 8pt font to allow comfortable reading without excessive shortening
     style_normal = ParagraphStyle('Normal', parent=styles['Normal'], fontSize=8, leading=9)
+    style_subtotal = ParagraphStyle('Subtotal', parent=styles['Normal'], fontSize=8, leading=9,
+                                    fontName='Helvetica-Bold', alignment=2)  # Right align
 
     # 1. Header
     title_text = f"GENERAL LEDGER: {branch_id} ({start_date.strftime('%d-%b-%Y')} to {end_date.strftime('%d-%b-%Y')})"
     elements.append(Paragraph(title_text, style_title))
     elements.append(Spacer(1, 5 * mm))
 
+    # --- SORTING & GROUPING ---
+    rx_objs = [t for t in transactions if t.transaction_type == 'Receipt']
+    vx_objs = [t for t in transactions if t.transaction_type == 'Voucher']
+
+    # Sort Receipts: DC Number first (grouped), then Date
+    rx_objs.sort(key=lambda t: (str(t.dc_number) if t.dc_number else "zzzz", t.date))
+
     # 2. Process Data
-    receipts = []
-    vouchers = []
-    total_r_cash = 0.0
-    total_v_cash = 0.0
+    receipts_rows = []
+    vouchers_rows = []
 
-    for t in transactions:
-        # Full Description (No truncation)
+    total_r_cash = Decimal(0)
+    total_v_cash = Decimal(0)
+
+    # --- BUILD RECEIPT ROWS (LEFT SIDE) ---
+    current_dc = None
+    dc_subtotal = Decimal(0)
+
+    for t in rx_objs:
+        txn_dc = t.dc_number if t.dc_number else None
+
+        # Check for DC Change -> Insert Subtotal Row
+        if current_dc and txn_dc != current_dc:
+            # Subtotal Row structure: 4 empty cols, Description, Amount
+            row_sub = [
+                "", "", "", "",
+                Paragraph(f"Total {current_dc}:", style_subtotal),
+                f"** {dc_subtotal:,.2f} **"
+            ]
+            receipts_rows.append(row_sub)
+            dc_subtotal = Decimal(0)
+
+        current_dc = txn_dc
+
+        # Standard Row
         desc = f"{t.party_name or ''} {t.description or ''}".strip()
-        if t.dc_number:
-            desc = f"[{t.dc_number}] {desc}"
+        if t.dc_number: desc = f"[{t.dc_number}] {desc}"
 
-        # Wrapped Category
-        category = Paragraph(t.category, style_normal)
+        row = [
+            t.date.strftime("%d-%m-%Y"),
+            str(t.receipt_number or ''),
+            Paragraph(t.category, style_normal),
+            t.payment_mode,
+            Paragraph(desc, style_normal),
+            f"{t.amount:,.2f}"
+        ]
+        receipts_rows.append(row)
 
-        # Payment Mode
-        mode = t.payment_mode
+        dc_subtotal += Decimal(t.amount)
+        if t.payment_mode and t.payment_mode.strip() == "Cash":
+            total_r_cash += Decimal(t.amount)
 
-        # Receipt Row Structure: Date, Ref, Category, Mode, Particulars, Amount
-        if t.transaction_type == "Receipt":
-            row = [
-                t.date.strftime("%d-%m-%Y"),
-                str(t.receipt_number or ''),
-                category,
-                mode,
-                Paragraph(desc, style_normal),  # Wraps long text
-                f"{t.amount:,.2f}"
-            ]
-            receipts.append(row)
-            if t.payment_mode == "Cash": total_r_cash += t.amount
+    # Final Subtotal
+    if current_dc:
+        row_sub = [
+            "", "", "", "",
+            Paragraph(f"Total {current_dc}:", style_subtotal),
+            f"** {dc_subtotal:,.2f} **"
+        ]
+        receipts_rows.append(row_sub)
 
-        # Voucher Row Structure: Date, Ref, Category, Particulars, Amount
-        else:
-            row = [
-                t.date.strftime("%d-%m-%Y"),
-                str(t.voucher_number or ''),
-                category,
-                # Mode not explicitly shown in voucher column structure to save space,
-                # or can be added. Usually Vouchers in T-Format imply cash unless bank column exists.
-                # Adding Particulars
-                Paragraph(desc, style_normal),
-                f"{t.amount:,.2f}"
-            ]
-            vouchers.append(row)
-            if t.payment_mode == "Cash": total_v_cash += t.amount
+    # --- BUILD VOUCHER ROWS (RIGHT SIDE) ---
+    for t in vx_objs:
+        desc = f"{t.party_name or ''} {t.description or ''}".strip()
 
-    # 3. Create Table Data
-    max_len = max(len(receipts), len(vouchers))
+        row = [
+            t.date.strftime("%d-%m-%Y"),
+            str(t.voucher_number or ''),
+            Paragraph(t.category, style_normal),
+            Paragraph(desc, style_normal),
+            f"{t.amount:,.2f}"
+        ]
+        vouchers_rows.append(row)
+
+        if t.payment_mode and t.payment_mode.strip() == "Cash":
+            total_v_cash += Decimal(t.amount)
+
+    # 3. Merge into T-Format Table
+    max_len = max(len(receipts_rows), len(vouchers_rows))
     table_data = []
 
     # Header Row
     headers = [
-        "Date", "Ref No", "Category", "Mode", "Particulars (Receipts)", "Amount",  # Left Side
-        "Date", "Ref No", "Category", "Particulars (Vouchers)", "Amount"  # Right Side
+        "Date", "Ref No", "Category", "Mode", "Particulars (Receipts)", "Amount",  # Left
+        "Date", "Ref No", "Category", "Particulars (Vouchers)", "Amount"  # Right
     ]
     table_data.append(headers)
 
     for i in range(max_len):
-        r = receipts[i] if i < len(receipts) else [""] * 6
-        v = vouchers[i] if i < len(vouchers) else [""] * 5
+        r = receipts_rows[i] if i < len(receipts_rows) else [""] * 6
+        v = vouchers_rows[i] if i < len(vouchers_rows) else [""] * 5
+        table_data.append(r + v)
 
-        combined_row = r + v
-        table_data.append(combined_row)
-
-    # 4. Table Configuration (Approx 285mm usable width)
-    # Receipts (6 cols): 20 + 15 + 25 + 15 + 50 + 20 = 145mm
-    # Vouchers (5 cols): 20 + 15 + 25 + 60 + 20 = 140mm
-    # Total: 285mm
-
+    # 4. Table Layout
+    # Receipts (6 cols): 20 + 12 + 25 + 15 + 50 + 20 = 142mm
+    # Vouchers (5 cols): 20 + 12 + 25 + 66 + 20 = 143mm
     col_widths = [
-        20 * mm, 12 * mm, 25 * mm, 15 * mm, 50 * mm, 20 * mm,  # Receipts
-        20 * mm, 12 * mm, 25 * mm, 66 * mm, 20 * mm  # Vouchers
+        20 * mm, 12 * mm, 25 * mm, 15 * mm, 50 * mm, 20 * mm,  # Left
+        20 * mm, 12 * mm, 25 * mm, 66 * mm, 20 * mm  # Right
     ]
 
     t = Table(table_data, colWidths=col_widths, repeatRows=1)
 
     t.setStyle(TableStyle([
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 7),  # Slightly smaller for data
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('ALIGN', (5, 0), (5, -1), 'RIGHT'),  # Amt R
-        ('ALIGN', (10, 0), (10, -1), 'RIGHT'),  # Amt V
+        ('ALIGN', (5, 0), (5, -1), 'RIGHT'),  # Amt Left
+        ('ALIGN', (10, 0), (10, -1), 'RIGHT'),  # Amt Right
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
         ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-        ('LINEAFTER', (5, 0), (5, -1), 1.5, colors.black),  # Thick divider between R & V
+        ('LINEAFTER', (5, 0), (5, -1), 1.5, colors.black),  # Thick middle divider
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('LEFTPADDING', (0, 0), (-1, -1), 2),
         ('RIGHTPADDING', (0, 0), (-1, -1), 2),
@@ -312,11 +337,12 @@ def generate_pdf_ledger(branch_id, start_date, end_date, initial_cash, transacti
     elements.append(t)
     elements.append(Spacer(1, 5 * mm))
 
-    # 5. Summary Table
-    closing_cash = initial_cash + total_r_cash - total_v_cash
+    # 5. Summary
+    init_cash_dec = Decimal(str(initial_cash))
+    closing_cash = init_cash_dec + total_r_cash - total_v_cash
 
     summary_data = [
-        ["Opening Cash Balance:", f"{initial_cash:,.2f}"],
+        ["Opening Cash Balance:", f"{init_cash_dec:,.2f}"],
         ["(+) Total Cash Receipts:", f"{total_r_cash:,.2f}"],
         ["(-) Total Cash Vouchers:", f"{total_v_cash:,.2f}"],
         ["CLOSING CASH BALANCE:", f"{closing_cash:,.2f}"]
@@ -327,12 +353,11 @@ def generate_pdf_ledger(branch_id, start_date, end_date, initial_cash, transacti
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
         ('FONTSIZE', (0, 0), (-1, -1), 8),
         ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),  # Last row bold
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
         ('LINEABOVE', (0, -1), (-1, -1), 1, colors.black),
     ]))
 
     elements.append(s_table)
-
     doc.build(elements)
     buffer.seek(0)
     return buffer

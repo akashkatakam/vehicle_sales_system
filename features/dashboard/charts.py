@@ -1,5 +1,3 @@
-# akashkatakam/vehicle_sales_system/vehicle_sales_system-a25fe511bb8837d2b7b2d191078cc15650e0c6e0/charts.py
-
 import altair as alt
 import streamlit as st
 

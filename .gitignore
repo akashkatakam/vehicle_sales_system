@@ -6,3 +6,7 @@ __pycache__/*
 database_setup/*
 create_tables.py
 check.py
+/migration.py
+/old_data.py
+/refactor.sh
+/add_user.py
