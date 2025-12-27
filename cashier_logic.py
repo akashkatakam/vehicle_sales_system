@@ -80,15 +80,32 @@ def add_transaction(db: Session, data: dict):
             if generate_receipt:
                 branch = db.query(models.Branch).filter(models.Branch.Branch_ID == branch_id).with_for_update().first()
                 if branch:
+                    # --- Logic for Branch Receipt ---
                     if category == "Branch Receipt":
-                        # --- NEW LOGIC FOR BRANCH RECEIPT SERIES ---
                         current_num = branch.Branch_Receipt_Last_Number if branch.Branch_Receipt_Last_Number else 0
                         next_num = current_num + 1
                         branch.Branch_Receipt_Last_Number = next_num
                         data['receipt_number'] = next_num
                         success_msg = f"Success! Branch Receipt No: {next_num}"
+
+                    # --- NEW LOGIC: Job Card Sale ---
+                    elif category == "Job Card Sale":
+                        current_num = branch.Job_Card_Last_Number if branch.Job_Card_Last_Number else 0
+                        next_num = current_num + 1
+                        branch.Job_Card_Last_Number = next_num
+                        data['receipt_number'] = next_num
+                        success_msg = f"Success! Job Card No: {next_num}"
+
+                    # --- NEW LOGIC: Out Bill Sale ---
+                    elif category == "Out Bill Sale":
+                        current_num = branch.Out_Bill_Last_Number if branch.Out_Bill_Last_Number else 0
+                        next_num = current_num + 1
+                        branch.Out_Bill_Last_Number = next_num
+                        data['receipt_number'] = next_num
+                        success_msg = f"Success! Out Bill No: {next_num}"
+
+                    # --- Standard Receipts ---
                     else:
-                        # --- EXISTING LOGIC FOR STANDARD RECEIPTS ---
                         current_num = branch.Receipt_Last_Number if branch.Receipt_Last_Number else 0
                         next_num = current_num + 1
                         branch.Receipt_Last_Number = next_num
