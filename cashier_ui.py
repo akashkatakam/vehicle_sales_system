@@ -1,27 +1,65 @@
 # cashier_ui.py
 
 import streamlit as st
-import pandas as pd
+import time  # <--- NEW IMPORT
 from datetime import date
 import cashier_logic
 from database import get_db
-import models  # Needed for querying branches if not passed
+import pandas as pd
+import models
+
+# --- PERFORMANCE FIX: CACHING THE DC LOOKUP ---
+@st.cache_data(ttl=120)  # Cache data for 120 seconds to speed up reloads
+def get_cached_branch_records(branch_id: str):
+    """
+    Fetches sales records and converts them to a dictionary for fast lookup.
+    Prevents re-querying the DB on every page interaction.
+    """
+    db = next(get_db())
+    try:
+        # Fetch records
+        branch_records = cashier_logic.get_all_sales_records_by_branch(db, branch_id)
+
+        # Convert SQLAlchemy objects to a pure Python dictionary (cache-friendly)
+        # We Map "Customer Name | DC Number" -> Record Data
+        record_map = {}
+        for r in branch_records:
+            # Create a label for the dropdown
+            label = f"{r.Customer_Name} | {r.DC_Number}"
+
+            # Store essential data needed for the UI
+            record_map[label] = {
+                "DC_Number": r.DC_Number,
+                "Customer_Name": r.Customer_Name,
+                "Banker_Name": r.Banker_Name,
+                "Price_Negotiated_Final": r.Price_Negotiated_Final,
+                "Payment_DD": r.Payment_DD,
+                "Payment_DD_Received": r.Payment_DD_Received,
+                "Payment_DownPayment": r.Payment_DownPayment,
+                "Model": r.Model,
+                "Variant": r.Variant
+            }
+        return record_map
+    finally:
+        db.close()
 
 
 def render_entry_form(branch_id: str, selected_date: date):
     st.subheader("Enter Receipt or Voucher")
 
-    # --- DC Lookup Section ---
-    db = next(get_db())
-    branch_records = cashier_logic.get_all_sales_records_by_branch(db, branch_id)
-    record_map = {f"{r.Customer_Name} | {r.DC_Number}": r for r in branch_records}
+    # --- 1. OPTIMIZED DC LOOKUP ---
+    # Use the cached function instead of hitting DB directly
+    record_map = get_cached_branch_records(branch_id)
+
+    # Add "None" option and sort the rest
     options = ["None"] + list(record_map.keys())
 
     selected_option = st.selectbox(
         "Link to DC (Search by Name or DC Number)",
         options=options,
         index=0,
-        placeholder="Type to search..."
+        placeholder="Type to search...",
+        help="List auto-refreshes every 30 seconds"
     )
 
     linked_dc_number = None
@@ -30,24 +68,25 @@ def render_entry_form(branch_id: str, selected_date: date):
     is_dc_linked = False
 
     if selected_option != "None":
-        sale_rec = record_map[selected_option]
-        is_cash_sale = (sale_rec.Banker_Name == "N/A (Cash Sale)")
+        sale_data = record_map[selected_option]  # Access dict data
+
+        is_cash_sale = (sale_data["Banker_Name"] == "N/A (Cash Sale)")
 
         if is_cash_sale:
-            info_str = f"Total Sale Value: **₹{sale_rec.Price_Negotiated_Final:,.2f}**"
+            info_str = f"Total Sale Value: **₹{sale_data['Price_Negotiated_Final']:,.2f}**"
         else:
-            dd_exp = sale_rec.Payment_DD or 0
-            dd_rec = sale_rec.Payment_DD_Received or 0
+            dd_exp = sale_data["Payment_DD"] or 0
+            dd_rec = sale_data["Payment_DD_Received"] or 0
             dd_due = dd_exp - dd_rec
             info_str = (
-                f"Down Payment Due: **₹{sale_rec.Payment_DownPayment:,.2f}** | "
+                f"Down Payment Due: **₹{sale_data['Payment_DownPayment']:,.2f}** | "
                 f"DD Amount Due: **₹{dd_due:,.2f}**"
             )
 
-        st.info(f"✅ Found: **{sale_rec.Customer_Name}** | Model: {sale_rec.Model} | {info_str}")
-        linked_dc_number = sale_rec.DC_Number
-        default_party = sale_rec.Customer_Name
-        default_desc = f"Payment for {sale_rec.Model} ({sale_rec.Variant})"
+        st.info(f"✅ Found: **{sale_data['Customer_Name']}** | Model: {sale_data['Model']} | {info_str}")
+        linked_dc_number = sale_data["DC_Number"]
+        default_party = sale_data["Customer_Name"]
+        default_desc = f"Payment for {sale_data['Model']} ({sale_data['Variant']})"
         is_dc_linked = True
 
     # --- Transaction Type & Category ---
@@ -57,38 +96,31 @@ def render_entry_form(branch_id: str, selected_date: date):
         txn_type = st.radio("Type", ["Receipt", "Voucher"], horizontal=True)
 
     default_cat_index = 0
-
     if txn_type == "Receipt":
-        # 1. Define the full list of options (including the new "Branch Receipt")
-        all_receipt_opts = [
-            "General Receipt","Branch Receipt", "DD Received", "Vehicle Sale", "TA", "Accessories Sale",
+        # Base Options
+        category_opts = [
+            "Branch Receipt", "DD Received", "Vehicle Sale", "TA", "Accessories Sale",
             "Service", "GST Finance", "Others Vehicle Sale"
         ]
+
+        # Add Service Sub-Categories for Non-Head Branches
         if branch_id != "1":
-            all_receipt_opts.extend(["Job Card Sale", "Out Bill Sale"])
+            category_opts.extend(["Job Card Sale", "Out Bill Sale"])
 
-        # 2. Apply Logic: If a DC is linked, restrict the options
-        if is_dc_linked:
-            # User specified strict list for Linked DCs
-            category_opts = ["Vehicle Sale", "DD Received", "Others Vehicle Sale"]
-        else:
-            # Otherwise show everything
-            category_opts = all_receipt_opts
-
-        # 3. Set Default Selection
         if is_dc_linked:
             try:
-                # Default to Vehicle Sale if available
+                # Restrict options if DC is linked
+                category_opts = ["Vehicle Sale", "DD Received", "Others Vehicle Sale"]
                 default_cat_index = category_opts.index("Vehicle Sale")
             except ValueError:
                 default_cat_index = 0
     else:
-        # Voucher categories remain unchanged
         category_opts = [
             "General Expenses", "Petrol", "Godown to Honda Transport",
             "Sadar", "Staff Vouchers", "Bank Deposit",
             "Ayodhya", "Service Branch", "General"
         ]
+
     with col_ctrl_2:
         category = st.selectbox("Category", category_opts, index=default_cat_index, key=f"cat_{txn_type}")
 
@@ -122,6 +154,7 @@ def render_entry_form(branch_id: str, selected_date: date):
 
         if st.form_submit_button("Save Transaction", type="primary"):
             if amount > 0:
+                db = next(get_db())  # Open DB connection for saving
                 data = {
                     "date": selected_date,
                     "transaction_type": txn_type,
@@ -136,14 +169,23 @@ def render_entry_form(branch_id: str, selected_date: date):
                     "is_expense": is_expense
                 }
                 success, msg = cashier_logic.add_transaction(db, data)
+                db.close()  # Close DB
+
                 if success:
-                    st.success(f"{msg}")
+                    # --- NEW LOGIC: POP-UP AND DELAY ---
+                    # 1. Show the success message prominently
+                    st.success(f"✅ {msg}")
+
+                    # 2. Add a visual progress bar or spinner to indicate the pause
+                    with st.spinner("Saved! Refreshing..."):
+                        time.sleep(1)  # Wait for 1 seconds
+
+                    # 3. Rerun the page to clear form
                     st.rerun()
                 else:
                     st.error(msg)
             else:
                 st.warning("Enter valid amount")
-    db.close()
 
 
 def render_import_tab(current_branch_id: str, working_date: date):
