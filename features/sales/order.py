@@ -7,7 +7,7 @@ from reportlab.lib.colors import red, black
 from typing import Dict, Any, List
 from datetime import datetime
 
-from features.sales.logic import GST_RATE_DISPLAY
+from features.sales.config import GST_RATE_DISPLAY # Fixed Import
 from utils import IST_TIMEZONE # Updated Import
 
 

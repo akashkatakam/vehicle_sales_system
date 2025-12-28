@@ -3,12 +3,9 @@ from typing import Dict, Any, List, Tuple
 from sqlalchemy.orm import Session
 from core import data_manager, models  # Updated Import
 from features.sales.order import SalesOrder  # Updated Import
-
-# --- CONSTANTS ---
-HP_FEE_DEFAULT = 2000.00
-HP_FEE_BANK_QUOTATION = 500.00
-GST_RATE_CALC = 0.00
-GST_RATE_DISPLAY = 18
+from features.sales.config import (
+    HP_FEE_DEFAULT, HP_FEE_BANK_QUOTATION, GST_RATE_CALC
+)
 
 
 def reconstruct_sales_order(db: Session, record_id: int):
