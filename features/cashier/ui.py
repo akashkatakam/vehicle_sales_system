@@ -5,6 +5,7 @@ from features.cashier import logic as cashier_logic # Updated Import
 from core.database import get_db # Updated Import
 from core import models # Updated Import
 import pandas as pd
+from decimal import Decimal
 
 # --- CACHED DC LOOKUP ---
 @st.cache_data(ttl=30)
@@ -58,25 +59,52 @@ def render_entry_form(branch_id: str, selected_date: date):
     if selected_option != "None":
         sale_data = record_map[selected_option]
 
+        # --- NEW LOGIC START ---
+
+        # 1. Identify Sale Type
         is_cash_sale = (sale_data["Banker_Name"] == "N/A (Cash Sale)")
 
+        # 2. Determine "Customer Payable Target"
         if is_cash_sale:
-            info_str = f"Total Sale Value: **₹{sale_data['Price_Negotiated_Final']:,.2f}**"
+            # Cash Sale: Customer pays the Full Price
+            target_amount = Decimal(str(sale_data['Price_Negotiated_Final']))
+            amount_label = "Total Sale Value"
         else:
-            dd_exp = sale_data["Payment_DD"] or 0
-            dd_rec = sale_data["Payment_DD_Received"] or 0
-            dd_due = dd_exp - dd_rec
-            info_str = (
-                f"Down Payment Due: **₹{sale_data['Payment_DownPayment']:,.2f}** | "
-                f"DD Amount Due: **₹{dd_due:,.2f}**"
-            )
+            # Finance Sale: Customer ONLY pays the Down Payment
+            target_amount = Decimal(str(sale_data['Payment_DownPayment']))
+            amount_label = "Down Payment (Customer Share)"
 
-        st.info(f"✅ Found: **{sale_data['Customer_Name']}** | Model: {sale_data['Model']} | {info_str}")
+        # 3. Fetch Total Already Paid
+        db_lookup = next(get_db())
+        total_paid = cashier_logic.get_total_paid_for_dc(db_lookup, sale_data["DC_Number"])
+        db_lookup.close()
+
+        # 4. Calculate Actual Due
+        actual_balance = target_amount - total_paid
+
+        # --- Display Info Block ---
         linked_dc_number = sale_data["DC_Number"]
         default_party = sale_data["Customer_Name"]
         default_desc = f"Payment for {sale_data['Model']} ({sale_data['Variant']})"
         is_dc_linked = True
 
+        st.info(f"✅ Found: **{sale_data['Customer_Name']}** | Model: {sale_data['Model']}")
+
+        c1, c2, c3 = st.columns(3)
+
+        # Col 1: Target Amount (varies by type)
+        c1.markdown(f"🎯 **{amount_label}:**\n### ₹{target_amount:,.2f}")
+
+        # Col 2: Total Paid
+        c2.markdown(f"💵 **Total Collected:**\n### ₹{total_paid:,.2f}")
+
+        # Col 3: Balance Status
+        if actual_balance > 0:
+            c3.error(f"💰 **Customer Due:**\n### ₹{actual_balance:,.2f}")
+        elif actual_balance < 0:
+            c3.warning(f"⚠️ **Overpaid:**\n### ₹{abs(actual_balance):,.2f}")
+        else:
+            c3.success("🎉 **Fully Paid**\n### ₹0.00")
     # --- Transaction Type & Category ---
     col_ctrl_1, col_ctrl_2 = st.columns(2)
 

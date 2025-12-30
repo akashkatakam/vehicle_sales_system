@@ -192,7 +192,7 @@ def import_transactions(db: Session, transaction_ids: list, target_branch_id: st
 
 
 def generate_pdf_ledger(branch_id, start_date, end_date, initial_cash, transactions):
-    """Generates a T-Format Ledger PDF with Grouping & Subtotals on the Receipts Side."""
+    """Generates a T-Format Ledger. Sorts 'Groups' by Receipt Number, keeping DC transactions together."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -209,22 +209,77 @@ def generate_pdf_ledger(branch_id, start_date, end_date, initial_cash, transacti
     # Custom Styles
     style_title = ParagraphStyle('Title', parent=styles['Heading2'], alignment=1, fontSize=12)
     style_normal = ParagraphStyle('Normal', parent=styles['Normal'], fontSize=8, leading=9)
+    # Ensure alignment=2 (Right) for numbers
     style_subtotal = ParagraphStyle('Subtotal', parent=styles['Normal'], fontSize=8, leading=9,
-                                    fontName='Helvetica-Bold', alignment=2)  # Right align
+                                    fontName='Helvetica-Bold', alignment=2)
 
     # 1. Header
     title_text = f"GENERAL LEDGER: {branch_id} ({start_date.strftime('%d-%b-%Y')} to {end_date.strftime('%d-%b-%Y')})"
     elements.append(Paragraph(title_text, style_title))
     elements.append(Spacer(1, 5 * mm))
 
-    # --- SORTING & GROUPING ---
+    # --- HYBRID SORTING LOGIC ---
+    def get_sort_key(txn, attr='receipt_number'):
+        val = getattr(txn, attr, 0)
+        try:
+            return int(val) if val is not None else 0
+        except (ValueError, TypeError):
+            return 0
+
     rx_objs = [t for t in transactions if t.transaction_type == 'Receipt']
     vx_objs = [t for t in transactions if t.transaction_type == 'Voucher']
 
-    # Sort Receipts: DC Number first (grouped), then Date
-    rx_objs.sort(key=lambda t: (str(t.dc_number) if t.dc_number else "zzzz", t.date))
+    # Step A: Sort Vouchers normally
+    vx_objs.sort(key=lambda t: get_sort_key(t, 'voucher_number'))
 
-    # 2. Process Data
+    # Step B: Group Receipts
+    dc_groups = {}
+    no_dc_list = []
+
+    for t in rx_objs:
+        if t.dc_number and str(t.dc_number).strip():
+            dc_key = str(t.dc_number).strip()
+            if dc_key not in dc_groups:
+                dc_groups[dc_key] = []
+            dc_groups[dc_key].append(t)
+        else:
+            no_dc_list.append(t)
+
+    # Step C: Create "Blocks" to sort
+    blocks = []
+
+    # 1. Add Single Blocks (Non-DC)
+    for t in no_dc_list:
+        blocks.append({
+            'type': 'single',
+            'txns': [t],
+            'rank': get_sort_key(t, 'receipt_number')
+        })
+
+    # 2. Add Group Blocks (DC)
+    for dc, txns in dc_groups.items():
+        # 2a. Sort receipts INSIDE the group
+        txns.sort(key=lambda x: get_sort_key(x, 'receipt_number'))
+
+        # --- FIX 1: BETTER RANKING LOGIC ---
+        # Find all valid (non-zero) receipt numbers in this group
+        valid_nums = [get_sort_key(x, 'receipt_number') for x in txns if get_sort_key(x, 'receipt_number') > 0]
+
+        # If the group has at least one numbered receipt, use the lowest one as the Rank.
+        # Otherwise (if all are 0/None), use 0.
+        rank = min(valid_nums) if valid_nums else 0
+
+        blocks.append({
+            'type': 'group',
+            'dc': dc,
+            'txns': txns,
+            'rank': rank
+        })
+
+    # Step D: Master Sort of the Blocks
+    blocks.sort(key=lambda b: b['rank'])
+
+    # 2. Process Data into Rows
     receipts_rows = []
     vouchers_rows = []
 
@@ -232,51 +287,38 @@ def generate_pdf_ledger(branch_id, start_date, end_date, initial_cash, transacti
     total_v_cash = Decimal(0)
 
     # --- BUILD RECEIPT ROWS (LEFT SIDE) ---
-    current_dc = None
-    dc_subtotal = Decimal(0)
+    for block in blocks:
+        block_total = Decimal(0)
 
-    for t in rx_objs:
-        txn_dc = t.dc_number if t.dc_number else None
+        for t in block['txns']:
+            desc = f"{t.party_name or ''} {t.description or ''}".strip()
+            if t.dc_number:
+                desc = f"[DC: {t.dc_number}] {desc}"
 
-        # Check for DC Change -> Insert Subtotal Row
-        if current_dc and txn_dc != current_dc:
-            # Subtotal Row structure: 4 empty cols, Description, Amount
+            row = [
+                t.date.strftime("%d-%m-%Y"),
+                str(t.receipt_number or ''),
+                Paragraph(t.category, style_normal),
+                t.payment_mode,
+                Paragraph(desc, style_normal),
+                f"{t.amount:,.2f}"
+            ]
+            receipts_rows.append(row)
+
+            block_total += Decimal(t.amount)
+            if t.payment_mode and t.payment_mode.strip() == "Cash":
+                total_r_cash += Decimal(t.amount)
+
+        # Add Subtotal
+        if block['type'] == 'group':
+            # --- FIX 2: WRAP AMOUNT IN PARAGRAPH ---
+            # This allows the <b> tags to render correctly.
             row_sub = [
                 "", "", "", "",
-                Paragraph(f"Total {current_dc}:", style_subtotal),
-                f"** {dc_subtotal:,.2f} **"
+                Paragraph(f"<b>Total ({block['dc']}):</b>", style_subtotal),
+                Paragraph(f"<b>{block_total:,.2f}</b>", style_subtotal)
             ]
             receipts_rows.append(row_sub)
-            dc_subtotal = Decimal(0)
-
-        current_dc = txn_dc
-
-        # Standard Row
-        desc = f"{t.party_name or ''} {t.description or ''}".strip()
-        if t.dc_number: desc = f"[{t.dc_number}] {desc}"
-
-        row = [
-            t.date.strftime("%d-%m-%Y"),
-            str(t.receipt_number or ''),
-            Paragraph(t.category, style_normal),
-            t.payment_mode,
-            Paragraph(desc, style_normal),
-            f"{t.amount:,.2f}"
-        ]
-        receipts_rows.append(row)
-
-        dc_subtotal += Decimal(t.amount)
-        if t.payment_mode and t.payment_mode.strip() == "Cash":
-            total_r_cash += Decimal(t.amount)
-
-    # Final Subtotal
-    if current_dc:
-        row_sub = [
-            "", "", "", "",
-            Paragraph(f"Total {current_dc}:", style_subtotal),
-            f"** {dc_subtotal:,.2f} **"
-        ]
-        receipts_rows.append(row_sub)
 
     # --- BUILD VOUCHER ROWS (RIGHT SIDE) ---
     for t in vx_objs:
@@ -298,10 +340,9 @@ def generate_pdf_ledger(branch_id, start_date, end_date, initial_cash, transacti
     max_len = max(len(receipts_rows), len(vouchers_rows))
     table_data = []
 
-    # Header Row
     headers = [
-        "Date", "Ref No", "Category", "Mode", "Particulars (Receipts)", "Amount",  # Left
-        "Date", "Ref No", "Category", "Particulars (Vouchers)", "Amount"  # Right
+        "Date", "Ref No", "Category", "Mode", "Particulars (Receipts)", "Amount",
+        "Date", "Ref No", "Category", "Particulars (Vouchers)", "Amount"
     ]
     table_data.append(headers)
 
@@ -311,11 +352,9 @@ def generate_pdf_ledger(branch_id, start_date, end_date, initial_cash, transacti
         table_data.append(r + v)
 
     # 4. Table Layout
-    # Receipts (6 cols): 20 + 12 + 25 + 15 + 50 + 20 = 142mm
-    # Vouchers (5 cols): 20 + 12 + 25 + 66 + 20 = 143mm
     col_widths = [
-        20 * mm, 12 * mm, 25 * mm, 15 * mm, 50 * mm, 20 * mm,  # Left
-        20 * mm, 12 * mm, 25 * mm, 66 * mm, 20 * mm  # Right
+        20 * mm, 12 * mm, 25 * mm, 15 * mm, 50 * mm, 20 * mm,
+        20 * mm, 12 * mm, 25 * mm, 66 * mm, 20 * mm
     ]
 
     t = Table(table_data, colWidths=col_widths, repeatRows=1)
@@ -324,11 +363,11 @@ def generate_pdf_ledger(branch_id, start_date, end_date, initial_cash, transacti
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, -1), 7),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('ALIGN', (5, 0), (5, -1), 'RIGHT'),  # Amt Left
-        ('ALIGN', (10, 0), (10, -1), 'RIGHT'),  # Amt Right
+        ('ALIGN', (5, 0), (5, -1), 'RIGHT'),
+        ('ALIGN', (10, 0), (10, -1), 'RIGHT'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
         ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-        ('LINEAFTER', (5, 0), (5, -1), 1.5, colors.black),  # Thick middle divider
+        ('LINEAFTER', (5, 0), (5, -1), 1.5, colors.black),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('LEFTPADDING', (0, 0), (-1, -1), 2),
         ('RIGHTPADDING', (0, 0), (-1, -1), 2),
@@ -361,3 +400,12 @@ def generate_pdf_ledger(branch_id, start_date, end_date, initial_cash, transacti
     doc.build(elements)
     buffer.seek(0)
     return buffer
+
+def get_total_paid_for_dc(db: Session, dc_number: str) -> Decimal:
+    """Calculates total receipts collected for a specific DC Number."""
+    total = db.query(func.sum(models.CashierTransaction.amount)).filter(
+        models.CashierTransaction.dc_number == dc_number,
+        models.CashierTransaction.transaction_type == 'Receipt'
+    ).scalar()
+    # Handle Float to Decimal conversion safely using str()
+    return Decimal(str(total)) if total is not None else Decimal(0)
