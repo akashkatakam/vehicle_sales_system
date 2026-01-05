@@ -7,7 +7,8 @@ from core.database import db_session
 from core import models
 from core.data_manager import (
     get_all_branches, get_config_lists_by_branch, get_recent_records_for_reprint, get_universal_data,
-    get_accessory_package_for_model, create_sales_record, log_sale
+    get_accessory_package_for_model, create_sales_record, log_sale,
+    get_unlinked_booking_receipts, link_booking_receipts
 )
 from features.sales.logic import (
     calculate_finance_fees, get_next_dc_number, generate_accessory_invoice_number,
@@ -130,9 +131,11 @@ def SalesForm():
         selected_paint_color = st.selectbox("Paint Color:", colors)
         selected_vehicle_row = avail_variants[avail_variants['Variant'] == selected_variant]
 
-        c3, c4 = st.columns(2)
+        # --- UPDATED: Added Double Tax Checkbox ---
+        c3, c4, c5 = st.columns(3)
         pr_fee_checkbox = c3.checkbox("PR Fee Applicable?")
-        ew_selection = c4.selectbox("Extended Warranty:", ["None", "3+1", "3+2", "3+3"])
+        double_tax_checkbox = c4.checkbox("Double Tax Collected?")
+        ew_selection = c5.selectbox("Extended Warranty:", ["None", "3+1", "3+2", "3+3"])
 
         listed_price = (selected_vehicle_row['FINAL_PRICE'].iloc[
                             0] + pricing_adjustment) if not selected_vehicle_row.empty else 0.0
@@ -148,6 +151,39 @@ def SalesForm():
 
     with st.container(border=True):
         st.header("3. Payment & Financing")
+
+        # --- NEW: Booking Receipt Linking ---
+        linked_total = 0.0
+        selected_receipt_ids = []
+
+        # Fetch unlinked receipts
+        with db_session() as db:
+            unlinked_receipts = get_unlinked_booking_receipts(db, branch_id)
+
+        if unlinked_receipts:
+            # Create a dictionary for display mapping
+            receipt_options = {
+                f"{r.party_name} | {format_currency(r.amount)} | {r.date.strftime('%d-%m')}": r
+                for r in unlinked_receipts
+            }
+
+            selected_keys = st.multiselect(
+                "🔗 Link Existing Booking Receipts (Optional):",
+                options=list(receipt_options.keys()),
+                help="Select booking receipts already paid by this customer."
+            )
+
+            # Calculate total
+            for key in selected_keys:
+                r = receipt_options[key]
+                linked_total += float(r.amount)
+                selected_receipt_ids.append(r.id)
+
+            if linked_total > 0:
+                st.info(f"✅ **Linked Amount:** {format_currency(linked_total)} (This will be recorded as 'Received')")
+        else:
+            st.caption("No unlinked booking receipts found for this branch.")
+
         sale_type = st.radio("Sale Type:", ["Cash", "Finance"], horizontal=True)
 
         if sale_type == "Finance":
@@ -165,7 +201,10 @@ def SalesForm():
                 final_financier_name = financier_selection
                 final_executive_name = st.selectbox("Executive Name:", EXECUTIVE_LIST)
 
-            dd_amount = st.number_input("DD / Booking Amount:", min_value=0.0, step=100.0)
+            # Pre-fill value with linked_total if available, but allow user to edit
+            dd_val = linked_total if linked_total > 0 else 0.0
+            dd_amount = st.number_input("DD / Booking Amount (Expected):", min_value=0.0, step=100.0, value=dd_val)
+
             hp_fee_to_charge, incentive_earned = calculate_finance_fees(
                 financier_selection, dd_amount, out_finance_flag, incentive_rules
             )
@@ -213,11 +252,25 @@ def SalesForm():
                     pr_fee_checkbox, ew_selection,
                     float(row['ACCESSORIES']), float(row['HC']),
                     float(row['EW_3_1']) if ew_selection != "None" else 0.0,
-                    float(row['PR_CHARGES']) if pr_fee_checkbox else 0.0
+                    float(row['PR_CHARGES']) if pr_fee_checkbox else 0.0,
+                    double_tax_checkbox  # <--- Passing the checkbox value here
                 )
                 if sale_type == "Finance": order.set_finance_details(dd_amount, down_payment)
 
-                create_sales_record(db, order.get_data_for_export(dc_seq_no, bill_1_seq, bill_2_seq))
+                # --- PREPARE DATA & INJECT LINKED RECEIPT INFO ---
+                record_data = order.get_data_for_export(dc_seq_no, bill_1_seq, bill_2_seq)
+
+                # If we linked receipts, we mark that amount as "Received" immediately
+                if linked_total > 0:
+                    record_data['Payment_DD_Received'] = linked_total
+
+                create_sales_record(db, record_data)
+
+                # --- NEW: UPDATE CASHIER TRANSACTIONS ---
+                if selected_receipt_ids:
+                    link_booking_receipts(db, dc_number, selected_receipt_ids)
+                # ----------------------------------------
+
                 log_sale(db, branch_id, selected_model, row['Variant'], selected_paint_color, 1,
                          datetime.now(IST_TIMEZONE), f"Auto-logged: {dc_number}")
 

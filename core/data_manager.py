@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, text
-from core import models  # Updated Import
+from sqlalchemy import func, text, or_
+from core import models
+from core.models import CashierTransaction
 from utils import IST_TIMEZONE
 from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
@@ -103,6 +104,39 @@ def get_all_sales_records_for_dashboard(db: Session, branch_id_filter: str = Non
     df['Timestamp'] = pd.to_datetime(df['Timestamp'])
     return df
 
+
+def get_unlinked_booking_receipts(db: Session, branch_id: str) -> List[models.CashierTransaction]:
+    """
+    Fetches 'Booking Receipt' transactions for the branch that are not yet linked to a DC.
+    """
+    return db.query(models.CashierTransaction).filter(
+        models.CashierTransaction.branch_id == branch_id,
+        models.CashierTransaction.category == "Booking Receipt",
+        models.CashierTransaction.transaction_type == "Receipt",
+        or_(
+            models.CashierTransaction.dc_number.is_(None),
+            models.CashierTransaction.dc_number == ""
+        )
+    ).order_by(models.CashierTransaction.date.desc()).all()
+
+
+def link_booking_receipts(db: Session, dc_number: str, receipt_ids: List[int]):
+    """
+    Updates specific cashier transactions to link them to a generated DC Number.
+    """
+    if not receipt_ids:
+        return
+
+    try:
+        # Bulk update the dc_number for the selected receipt IDs
+        db.query(models.CashierTransaction).filter(
+            models.CashierTransaction.id.in_(receipt_ids)
+        ).update({models.CashierTransaction.dc_number: dc_number}, synchronize_session=False)
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise e
 
 def get_user_by_username(db: Session, username: str) -> Optional[models.User]:
     return db.query(models.User).filter(models.User.username == username).first()
