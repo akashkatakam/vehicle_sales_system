@@ -62,7 +62,8 @@ def reconstruct_sales_order(db: Session, record_id: int):
         price_accessories=getattr(record, 'price_accessories', 0.0),
         price_ew=getattr(record, 'price_ew', 0.0),
         price_pr=getattr(record, 'price_pr', 0.0),
-        price_hc=getattr(record, 'price_hc', 0.0)
+        price_hc=getattr(record, 'price_hc', 0.0),
+        has_double_tax=getattr(record, 'has_double_tax', False),
     )
 
     if record.Banker_Name != "N/A (Cash Sale)":

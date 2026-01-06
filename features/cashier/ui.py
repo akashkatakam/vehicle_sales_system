@@ -1,11 +1,12 @@
 import streamlit as st
 import time
 from datetime import date
-from features.cashier import logic as cashier_logic # Updated Import
-from core.database import get_db # Updated Import
-from core import models # Updated Import
+from features.cashier import logic as cashier_logic  # Updated Import
+from core.database import get_db  # Updated Import
+from core import models  # Updated Import
 import pandas as pd
 from decimal import Decimal
+
 
 # --- CACHED DC LOOKUP ---
 @st.cache_data(ttl=30)
@@ -64,15 +65,20 @@ def render_entry_form(branch_id: str, selected_date: date):
         # 1. Identify Sale Type
         is_cash_sale = (sale_data["Banker_Name"] == "N/A (Cash Sale)")
 
+        # Safe Decimal Conversion
+        payment_dd_expected = Decimal(str(sale_data.get('Payment_DD', 0.0) or 0.0))
+
         # 2. Determine "Customer Payable Target"
         if is_cash_sale:
             # Cash Sale: Customer pays the Full Price
             target_amount = Decimal(str(sale_data['Price_Negotiated_Final']))
             amount_label = "Total Sale Value"
+            finance_info_str = ""  # No DD for cash sales
         else:
             # Finance Sale: Customer ONLY pays the Down Payment
             target_amount = Decimal(str(sale_data['Payment_DownPayment']))
             amount_label = "Down Payment (Customer Share)"
+            finance_info_str = f"🏦 **DD Expected:** ₹{payment_dd_expected:,.2f}"
 
         # 3. Fetch Total Already Paid
         db_lookup = next(get_db())
@@ -92,8 +98,11 @@ def render_entry_form(branch_id: str, selected_date: date):
 
         c1, c2, c3 = st.columns(3)
 
-        # Col 1: Target Amount (varies by type)
-        c1.markdown(f"🎯 **{amount_label}:**\n### ₹{target_amount:,.2f}")
+        # Col 1: Target Amount (varies by type) + DD Info if Finance
+        with c1:
+            st.markdown(f"🎯 **{amount_label}:**\n### ₹{target_amount:,.2f}")
+            if not is_cash_sale:
+                st.caption(finance_info_str)  # Show DD Expected under the Down Payment
 
         # Col 2: Total Paid
         c2.markdown(f"💵 **Total Collected:**\n### ₹{total_paid:,.2f}")
@@ -113,9 +122,9 @@ def render_entry_form(branch_id: str, selected_date: date):
 
     default_cat_index = 0
     if txn_type == "Receipt":
-        # --- UPDATE: Added "General Receipt" and "Booking Receipt" ---
+        # --- UPDATE: Added "Short Amount Receipt" ---
         category_opts = [
-            "Branch Receipt", "General Receipt", "Booking Receipt",
+            "Branch Receipt", "General Receipt", "Booking Receipt", "Short Amount Receipt",
             "DD Received", "Vehicle Sale", "TA", "Accessories Sale",
             "Service", "GST Finance", "Others Vehicle Sale"
         ]
@@ -127,7 +136,9 @@ def render_entry_form(branch_id: str, selected_date: date):
         if is_dc_linked:
             try:
                 # Restrict options if DC is linked
-                category_opts = ["Vehicle Sale", "DD Received", "Others Vehicle Sale", "Booking Receipt"]
+                # Added "Short Amount Receipt" here as well
+                category_opts = ["Vehicle Sale", "DD Received", "Others Vehicle Sale", "Booking Receipt",
+                                 "Short Amount Receipt"]
                 default_cat_index = category_opts.index("Vehicle Sale")
             except ValueError:
                 default_cat_index = 0
@@ -203,7 +214,7 @@ def render_import_tab(current_branch_id: str, working_date: date):
     st.subheader(f"📥 Import Branch Daybook (Booking Date: {working_date.strftime('%d-%b-%Y')})")
     db = next(get_db())
     branches = db.query(models.Branch).filter(models.Branch.Branch_ID != current_branch_id,
-                                              models.Branch.dc_gen_enabled ==True).all()
+                                              models.Branch.dc_gen_enabled == True).all()
     branch_opts = {b.Branch_Name: b.Branch_ID for b in branches}
 
     col1, col2, col3 = st.columns(3)
