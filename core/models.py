@@ -1,7 +1,7 @@
 from typing import final
 from sqlalchemy import (
     Boolean, Column, Enum, Integer, String, Float,
-    ForeignKey, DateTime, UniqueConstraint, Date, Index, Numeric
+    ForeignKey, DateTime, UniqueConstraint, Date, Index, Numeric, JSON
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -234,6 +234,28 @@ class VehicleMaster(Base):
     dc_number = Column(String(15), nullable=True, index=True)
     current_branch = relationship("Branch", back_populates="vehicles")
     sale_record = relationship("SalesRecord", back_populates="vehicle")
+
+
+class ApprovalRequest(Base):
+    __tablename__ = "approval_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    Branch_ID = Column(String(50), nullable=False)
+
+    # Key fields for display in Dashboard
+    Customer_Name = Column(String(100))
+    Model = Column(String(100))
+    Mobile = Column(String(20))
+    Discount_Requested = Column(Float)
+    Final_Price = Column(Float)
+
+    # The Payload: Stores the entire order dictionary
+    Order_JSON = Column(JSON, nullable=False)
+
+    # Workflow
+    Status = Column(String(20), default="Pending")  # Pending, Approved, Rejected, Completed
+    Requested_At = Column(DateTime, default=datetime.now)
+    Approved_At = Column(DateTime, nullable=True)
 
 
 class CashierTransaction(Base):

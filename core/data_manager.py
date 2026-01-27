@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, text, or_
 from core import models
-from core.models import CashierTransaction
+from core.models import ApprovalRequest
 from utils import IST_TIMEZONE
 from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
@@ -228,3 +228,50 @@ def update_insurance_tr_status(db: Session, record_id: int, updates: Dict[str, A
     except Exception as e:
         db.rollback()
         st.error(f"Error updating record {record_id}: {e}")
+
+
+def create_approval_request(db: Session, order_data: dict, branch_id: str):
+    """Saves a temporary request to the approval_requests table."""
+    try:
+        req = ApprovalRequest(
+            Branch_ID=branch_id,
+            Customer_Name=order_data.get('Customer_Name', 'Unknown'),
+            Model=f"{order_data.get('Model', '')} {order_data.get('Variant', '')}",
+            Mobile=order_data.get('Phone_Number', ''),
+            Discount_Requested=order_data.get('Discount_Given', 0.0),
+            Final_Price=order_data.get('Price_Negotiated_Final', 0.0),
+            Order_JSON=order_data, # Save full dict as JSON
+            Status="Pending",
+            Requested_At=datetime.now(IST_TIMEZONE)
+        )
+        db.add(req)
+        db.commit()
+        db.refresh(req)
+        return req
+    except Exception as e:
+        db.rollback()
+        raise Exception(f"Failed to create approval request: {e}")
+
+def get_pending_approvals(db: Session, branch_id: str = None):
+    """Fetches pending or approved requests (that haven't been finalized)."""
+    query = db.query(ApprovalRequest).filter(
+        ApprovalRequest.Status.in_(['Pending', 'Approved'])
+    )
+    if branch_id:
+        query = query.filter(ApprovalRequest.Branch_ID == branch_id)
+    return query.order_by(ApprovalRequest.Requested_At.desc()).all()
+
+def update_approval_status(db: Session, request_id: int, new_status: str):
+    """Owner approves/rejects, or Sales finalizes (Completed)."""
+    try:
+        req = db.query(ApprovalRequest).get(request_id)
+        if req:
+            req.Status = new_status
+            if new_status == "Approved":
+                req.Approved_At = datetime.now(IST_TIMEZONE)
+            db.commit()
+            return True
+        return False
+    except Exception as e:
+        db.rollback()
+        raise e

@@ -8,7 +8,8 @@ from core import models
 from core.data_manager import (
     get_all_branches, get_config_lists_by_branch, get_recent_records_for_reprint, get_universal_data,
     get_accessory_package_for_model, create_sales_record, log_sale,
-    get_unlinked_booking_receipts, link_booking_receipts
+    get_unlinked_booking_receipts, link_booking_receipts,
+    create_approval_request, get_pending_approvals, update_approval_status
 )
 from features.sales.logic import (
     calculate_finance_fees, get_next_dc_number, generate_accessory_invoice_number,
@@ -18,6 +19,10 @@ from features.sales.order import SalesOrder
 from utils import CASH_SALE_TAG, IST_TIMEZONE, format_currency
 
 st.set_page_config(page_title="Sales DC Generator", layout="wide", initial_sidebar_state="collapsed")
+
+# --- CONFIGURATION ---
+APPROVAL_LIMIT = 1500.0
+OWNER_PHONE = "9198480xxxxx"
 
 
 @st.cache_data(ttl=3600)
@@ -37,6 +42,11 @@ def load_branch_config_cached(branch_id: str) -> Dict[str, Any]:
 
 if 'selected_branch_id' not in st.session_state: st.session_state.selected_branch_id = None
 if 'selected_branch_name' not in st.session_state: st.session_state.selected_branch_name = None
+
+
+def generate_approval_link(owner_phone, customer, vehicle, discount, amount):
+    msg = f"⚠️ *Approval Request* ⚠️\n\n*Customer:* {customer}\n*Vehicle:* {vehicle}\n*Discount:* ₹{discount:,.0f}\n*Final Price:* ₹{amount:,.0f}\n\nPlease approve in Dashboard."
+    return f"https://wa.me/{owner_phone}?text={msg.replace(' ', '%20')}"
 
 
 def BranchSelector():
@@ -63,6 +73,116 @@ def SalesForm():
             st.rerun()
     st.markdown("---")
 
+    # --- 1. DOWNLOAD SUCCESS AREA (Persistent after Rerun) ---
+    if 'generated_pdf_info' in st.session_state:
+        pdf_info = st.session_state['generated_pdf_info']
+        with st.container(border=True):
+            st.success(f"✅ DC **{pdf_info['dc_number']}** Finalized Successfully!")
+            c_d1, c_d2 = st.columns([1, 4])
+            with c_d1:
+                st.download_button(
+                    label="⬇️ Download PDF",
+                    data=pdf_info['buffer'],
+                    file_name=pdf_info['filename'],
+                    mime="application/pdf",
+                    type="primary",
+                    key="persistent_download_btn"
+                )
+            with c_d2:
+                if st.button("Close / Start New"):
+                    del st.session_state['generated_pdf_info']
+                    st.rerun()
+        st.markdown("---")
+
+    # --- 2. PENDING APPROVALS (RESUME SALE) ---
+    # Only show if we aren't currently showing a success message (to keep UI clean), or show below.
+    with st.expander("⏳ Pending Approvals (Resume Sale)", expanded=True):
+        with db_session() as db:
+            # Query the NEW table (Filters Status IN ['Pending', 'Approved'])
+            # Completed items are automatically excluded by the query
+            pending = get_pending_approvals(db, branch_id)
+
+            if pending:
+                for p in pending:
+                    with st.container(border=True):
+                        col_p1, col_p2, col_p3 = st.columns([3, 2, 2])
+                        col_p1.markdown(
+                            f"**{p.Customer_Name}** | {p.Model}\n\nDiscount: :red[**₹{p.Discount_Requested:,.0f}**]")
+
+                        if p.Status == 'Pending':
+                            col_p2.warning("🕒 Waiting for Owner...")
+                            if col_p2.button("Check Status", key=f"chk_{p.id}"):
+                                st.rerun()
+
+                        elif p.Status == 'Approved':
+                            col_p2.success("✅ Approved!")
+                            if col_p3.button("🖨️ Finalize & Print", key=f"fin_{p.id}", type="primary",
+                                             use_container_width=True):
+                                try:
+                                    # A. LOAD DATA FROM JSON BLOB
+                                    saved_data = dict(p.Order_JSON)
+
+                                    # B. GENERATE REAL SEQUENCES
+                                    dc_number, dc_seq = get_next_dc_number(db, branch_id)
+
+                                    # Recalculate Invoice numbers
+                                    branch_obj = db.query(models.Branch).get(branch_id)
+                                    uni_data = get_universal_data(db)
+                                    firm_master_df = uni_data['firm_master']
+                                    acc_list = get_accessory_package_for_model(db, saved_data.get('Model', ''))
+
+                                    acc_bills_data = process_accessories_and_split(
+                                        saved_data.get('Model', ''), acc_list, firm_master_df, branch_obj
+                                    )
+
+                                    bill_1_seq, bill_2_seq = 0, 0
+                                    for bill in acc_bills_data:
+                                        inv_str, inv_seq = generate_accessory_invoice_number(db, branch_obj,
+                                                                                             bill['firm_id'],
+                                                                                             bill['accessory_slot'])
+                                        if bill['accessory_slot'] == 1:
+                                            bill_1_seq = inv_seq
+                                        elif bill['accessory_slot'] == 2:
+                                            bill_2_seq = inv_seq
+
+                                    # C. UPDATE DATA WITH REAL NUMBERS
+                                    saved_data['DC_Number'] = dc_number
+                                    saved_data['DC_Sequence_No'] = dc_seq
+                                    saved_data['Acc_Inv_1_No'] = bill_1_seq
+                                    saved_data['Acc_Inv_2_No'] = bill_2_seq
+                                    saved_data['Timestamp'] = datetime.now(IST_TIMEZONE)
+
+                                    # D. INSERT INTO REAL TABLE
+                                    real_record = create_sales_record(db, saved_data)
+
+                                    # E. CLOSE THE REQUEST (Marks as Completed)
+                                    update_approval_status(db, p.id, "Completed")
+
+                                    # F. LOG & PRINT
+                                    log_sale(db, branch_id, real_record.Model, real_record.Variant,
+                                             real_record.Paint_Color, 1,
+                                             datetime.now(IST_TIMEZONE), f"Auto-logged: {dc_number}")
+
+                                    reprint_order = reconstruct_sales_order(db, real_record.id)
+                                    pdf_buffer = io.BytesIO()
+                                    reprint_order.generate_pdf_challan(pdf_buffer)
+
+                                    # G. SAVE TO SESSION & RERUN
+                                    # This ensures the list refreshes (removing the item) but download stays
+                                    st.session_state['generated_pdf_info'] = {
+                                        'dc_number': dc_number,
+                                        'buffer': pdf_buffer.getvalue(),
+                                        'filename': f"{dc_number}.pdf"
+                                    }
+                                    st.rerun()
+
+                                except Exception as e:
+                                    st.error(f"Finalization Error: {str(e)}")
+            else:
+                st.caption("No pending approvals.")
+    st.markdown("---")
+
+    # --- REPRINT SECTION ---
     with st.expander("🔄 DC Reprint", expanded=False):
         with db_session() as db:
             recent_recs = get_recent_records_for_reprint(db, branch_id)
@@ -87,6 +207,7 @@ def SalesForm():
             else:
                 st.warning("No recent records found.")
 
+    # --- MAIN FORM LOADING ---
     branch_config = load_branch_config_cached(branch_id)
     universal_data = load_universal_data_cached()
     all_branches = load_all_branches_cached()
@@ -131,7 +252,7 @@ def SalesForm():
         selected_paint_color = st.selectbox("Paint Color:", colors)
         selected_vehicle_row = avail_variants[avail_variants['Variant'] == selected_variant]
 
-        # --- UPDATED: Added Double Tax Checkbox ---
+        # Double Tax & PR Checkbox
         c3, c4, c5 = st.columns(3)
         pr_fee_checkbox = c3.checkbox("PR Fee Applicable?")
         double_tax_checkbox = c4.checkbox("Double Tax Collected?")
@@ -152,16 +273,13 @@ def SalesForm():
     with st.container(border=True):
         st.header("3. Payment & Financing")
 
-        # --- NEW: Booking Receipt Linking ---
         linked_total = 0.0
         selected_receipt_ids = []
 
-        # Fetch unlinked receipts
         with db_session() as db:
             unlinked_receipts = get_unlinked_booking_receipts(db, branch_id)
 
         if unlinked_receipts:
-            # Create a dictionary for display mapping
             receipt_options = {
                 f"{r.party_name} | {format_currency(r.amount)} | {r.date.strftime('%d-%m')}": r
                 for r in unlinked_receipts
@@ -173,7 +291,6 @@ def SalesForm():
                 help="Select booking receipts already paid by this customer."
             )
 
-            # Calculate total
             for key in selected_keys:
                 r = receipt_options[key]
                 linked_total += float(r.amount)
@@ -201,7 +318,6 @@ def SalesForm():
                 final_financier_name = financier_selection
                 final_executive_name = st.selectbox("Executive Name:", EXECUTIVE_LIST)
 
-            # Pre-fill value with linked_total if available, but allow user to edit
             dd_val = linked_total if linked_total > 0 else 0.0
             dd_amount = st.number_input("DD / Booking Amount (Expected):", min_value=0.0, step=100.0, value=dd_val)
 
@@ -220,68 +336,106 @@ def SalesForm():
             st.success(f"Total Cash Due: **{format_currency(final_cost_by_staff)}**")
 
     st.markdown("---")
-    if st.button("GENERATE DUAL-FIRM BILLS", type="primary", use_container_width=True):
-        if not name or not phone:
-            st.error("Missing Customer Name or Phone.")
-            return
 
-        with db_session() as db:
-            try:
-                dc_number, dc_seq_no = get_next_dc_number(db, branch_id)
-                branch_obj = db.query(models.Branch).get(branch_id)
-                acc_list = get_accessory_package_for_model(db, selected_model)
-                acc_bills_data = process_accessories_and_split(selected_model, acc_list, firm_master_df, branch_obj)
+    # --- DECISION LOGIC: APPROVAL OR GENERATE ---
+    requires_approval = discount > APPROVAL_LIMIT
 
-                bill_1_seq, bill_2_seq = 0, 0
-                for bill in acc_bills_data:
-                    inv_str, inv_seq = generate_accessory_invoice_number(db, branch_obj, bill['firm_id'],
-                                                                         bill['accessory_slot'])
-                    bill['Invoice_No'] = inv_str
-                    bill['Acc_Inv_Seq'] = inv_seq
-                    if bill['accessory_slot'] == 1:
-                        bill_1_seq = inv_seq
-                    elif bill['accessory_slot'] == 2:
-                        bill_2_seq = inv_seq
+    row = selected_vehicle_row.iloc[0]
+    order = SalesOrder(
+        name, place, phone, row.to_dict(), final_cost_by_staff, sales_staff,
+        final_financier_name, final_executive_name, selected_paint_color,
+        hp_fee_to_charge, incentive_earned, banker_name, "TEMP",
+        branch_name, [], branch_id,
+        pr_fee_checkbox, ew_selection,
+        float(row['ACCESSORIES']), float(row['HC']),
+        float(row['EW_3_1']) if ew_selection != "None" else 0.0,
+        float(row['PR_CHARGES']) if pr_fee_checkbox else 0.0,
+        double_tax_checkbox
+    )
+    if sale_type == "Finance": order.set_finance_details(dd_amount, down_payment)
 
-                row = selected_vehicle_row.iloc[0]
-                order = SalesOrder(
-                    name, place, phone, row.to_dict(), final_cost_by_staff, sales_staff,
-                    final_financier_name, final_executive_name, selected_paint_color,
-                    hp_fee_to_charge, incentive_earned, banker_name, dc_number,
-                    branch_name, [b for b in acc_bills_data if b['grand_total'] > 0], branch_id,
-                    pr_fee_checkbox, ew_selection,
-                    float(row['ACCESSORIES']), float(row['HC']),
-                    float(row['EW_3_1']) if ew_selection != "None" else 0.0,
-                    float(row['PR_CHARGES']) if pr_fee_checkbox else 0.0,
-                    double_tax_checkbox  # <--- Passing the checkbox value here
-                )
-                if sale_type == "Finance": order.set_finance_details(dd_amount, down_payment)
+    if requires_approval:
+        st.warning(
+            f"⚠️ **High Discount Warning**: {format_currency(discount)} exceeds limit of {format_currency(APPROVAL_LIMIT)}.")
+        st.info("This transaction requires Owner Approval. Request will be sent to the Owner's dashboard.")
 
-                # --- PREPARE DATA & INJECT LINKED RECEIPT INFO ---
-                record_data = order.get_data_for_export(dc_seq_no, bill_1_seq, bill_2_seq)
+        col_app1, col_app2 = st.columns(2)
 
-                # If we linked receipts, we mark that amount as "Received" immediately
-                if linked_total > 0:
-                    record_data['Payment_DD_Received'] = linked_total
+        if col_app1.button("📨 Submit for Approval", type="primary", use_container_width=True):
+            if not name or not phone:
+                st.error("Missing Customer Name or Phone.")
+                return
 
-                create_sales_record(db, record_data)
+            with db_session() as db:
+                try:
+                    record_data = order.get_data_for_export(0, 0, 0)
+                    if linked_total > 0:
+                        record_data['Payment_DD_Received'] = linked_total
 
-                # --- NEW: UPDATE CASHIER TRANSACTIONS ---
-                if selected_receipt_ids:
-                    link_booking_receipts(db, dc_number, selected_receipt_ids)
-                # ----------------------------------------
+                    create_approval_request(db, record_data, branch_id)
+                    st.success("Request Submitted Successfully!")
 
-                log_sale(db, branch_id, selected_model, row['Variant'], selected_paint_color, 1,
-                         datetime.now(IST_TIMEZONE), f"Auto-logged: {dc_number}")
+                    wa_link = generate_approval_link(OWNER_PHONE, name, f"{selected_model} {selected_variant}",
+                                                     discount, final_cost_by_staff)
+                    st.link_button("📲 Notify Owner on WhatsApp", wa_link)
 
-                pdf_buffer = io.BytesIO()
-                order.generate_pdf_challan(pdf_buffer)
-                pdf_buffer.seek(0)
-                st.download_button("Download DC (PDF)", pdf_buffer, f"{dc_number}_{name}.pdf", "application/pdf")
-                st.success(f"{dc_number} Generated Successfully!")
-                st.balloons()
-            except Exception as e:
-                st.error(f"Transaction failed: {e}")
+                except Exception as e:
+                    st.error(f"Request failed: {e}")
+
+    else:
+        # STANDARD GENERATION (DIRECT)
+        if st.button("GENERATE DUAL-FIRM BILLS", type="primary", use_container_width=True):
+            if not name or not phone:
+                st.error("Missing Customer Name or Phone.")
+                return
+
+            with db_session() as db:
+                try:
+                    dc_number, dc_seq_no = get_next_dc_number(db, branch_id)
+                    order.dc_number = dc_number
+
+                    branch_obj = db.query(models.Branch).get(branch_id)
+                    acc_list = get_accessory_package_for_model(db, selected_model)
+                    acc_bills_data = process_accessories_and_split(selected_model, acc_list, firm_master_df, branch_obj)
+
+                    bill_1_seq, bill_2_seq = 0, 0
+                    for bill in acc_bills_data:
+                        inv_str, inv_seq = generate_accessory_invoice_number(db, branch_obj, bill['firm_id'],
+                                                                             bill['accessory_slot'])
+                        bill['Invoice_No'] = inv_str
+                        bill['Acc_Inv_Seq'] = inv_seq
+                        if bill['accessory_slot'] == 1:
+                            bill_1_seq = inv_seq
+                        elif bill['accessory_slot'] == 2:
+                            bill_2_seq = inv_seq
+
+                    order.accessory_bills = [b for b in acc_bills_data if b['grand_total'] > 0]
+                    record_data = order.get_data_for_export(dc_seq_no, bill_1_seq, bill_2_seq)
+
+                    if linked_total > 0:
+                        record_data['Payment_DD_Received'] = linked_total
+
+                    create_sales_record(db, record_data)
+
+                    if selected_receipt_ids:
+                        link_booking_receipts(db, dc_number, selected_receipt_ids)
+
+                    log_sale(db, branch_id, selected_model, row['Variant'], selected_paint_color, 1,
+                             datetime.now(IST_TIMEZONE), f"Auto-logged: {dc_number}")
+
+                    pdf_buffer = io.BytesIO()
+                    order.generate_pdf_challan(pdf_buffer)
+
+                    # Direct Download (No need for session state loop here usually, but consistent behavior is fine)
+                    st.session_state['generated_pdf_info'] = {
+                        'dc_number': dc_number,
+                        'buffer': pdf_buffer.getvalue(),
+                        'filename': f"{dc_number}.pdf"
+                    }
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"Transaction failed: {e}")
 
 
 def main():
