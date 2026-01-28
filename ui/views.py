@@ -51,10 +51,20 @@ def render_metrics(data, role):
             cols = st.columns(5)
             cols[0].metric("Revenue", f"₹{data['Price_Negotiated_Final'].sum():,.0f}", width="content")
             cols[1].metric("Units Sold", f"{total_sales}")
-            cols[2].metric("DD Pending", f"₹{total_dd_pending:,.0f}", width="content")
-            cols[3].metric("Discounts", f"₹{data['Discount_Given'].sum():,.0f}", width="content")
+            cash_sales_count = len(data[data['Banker_Name'] == 'N/A (Cash Sale)'])
+            cols[2].metric("Cash Sale", f"{cash_sales_count}")
+            finance_sales_count = total_sales - cash_sales_count
+            cols[3].metric("Total Finance sale count", f"{finance_sales_count}")
+            cols[4].metric("Discounts", f"₹{data['Discount_Given'].sum():,.0f}", width="content")
             total_hp_collected = data['Charge_HP_Fee'].sum()
-            cols[4].metric("HP Fees", f"₹{total_hp_collected:,.0f}")
+            total_incentive_collected = data['Charge_Incentive'].sum()
+            total_pr_count = data['pr_fee_checkbox'].sum()
+            col6, col7, col8, col9, col10 = st.columns(5)
+            col6.metric("Total PR", f"{int(total_pr_count)}")
+            col7.metric("Total HP Fees", f"₹{total_hp_collected:,.0f}")
+            col8.metric("Total Finance Incentives", f"₹{total_incentive_collected:,.0f}")
+            col9.metric("DD Pending", f"₹{total_dd_pending:,.0f}", width="content")
+            col10.metric("DD Expected", f"₹{total_dd_expected:,.0f}")
 
         elif role == "Back Office":
             st.header("Key Metrics")
