@@ -49,6 +49,51 @@ def generate_approval_link(owner_phone, customer, vehicle, discount, amount):
     return f"https://wa.me/{owner_phone}?text={msg.replace(' ', '%20')}"
 
 
+# --- RESET LOGIC ---
+def reset_form_state():
+    """Clears all form input keys and the dialog trigger from session state."""
+    keys_to_clear = [
+        "customer_name", "customer_phone", "customer_place", "sales_staff_selector",
+        "vehicle_model_selector", "vehicle_variant_selector", "vehicle_color_selector",
+        "pr_check", "double_tax_check", "ew_select", "final_cost_input",
+        "booking_receipts_select", "sale_type_radio", "out_finance_check",
+        "financier_selector", "custom_financier", "custom_executive",
+        "banker_name_input", "finance_executive_selector", "dd_amount_input",
+        "generated_pdf_info"  # Clearing this closes the dialog and prevents reopening
+    ]
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
+
+
+# --- POPUP DIALOG FOR SUCCESS ---
+@st.dialog("🎉 Order Finalized!")
+def show_success_dialog(pdf_info):
+    st.balloons()
+    st.success(f"✅ DC **{pdf_info['dc_number']}** Generated Successfully!")
+
+    st.write("The Delivery Challan has been generated.")
+
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        st.download_button(
+            label="⬇️ Download PDF",
+            data=pdf_info['buffer'],
+            file_name=pdf_info['filename'],
+            mime="application/pdf",
+            type="primary",
+            use_container_width=True,
+            key="popup_download_btn"
+            # NOTE: on_click removed so form does NOT reset on download
+        )
+
+    with col2:
+        # "Close" button to trigger the reset action explicitly
+        if st.button("Close", type="secondary", use_container_width=True, key="popup_close_btn"):
+            reset_form_state()
+            st.rerun()
+
+
 def BranchSelector():
     st.title("🚗 Sales DC Generator")
     all_branches = [b for b in load_all_branches_cached() if b.dc_gen_enabled]
@@ -73,33 +118,13 @@ def SalesForm():
             st.rerun()
     st.markdown("---")
 
-    # --- 1. DOWNLOAD SUCCESS AREA (Persistent after Rerun) ---
+    # --- 1. DOWNLOAD SUCCESS AREA (POPUP) ---
     if 'generated_pdf_info' in st.session_state:
-        pdf_info = st.session_state['generated_pdf_info']
-        with st.container(border=True):
-            st.success(f"✅ DC **{pdf_info['dc_number']}** Finalized Successfully!")
-            c_d1, c_d2 = st.columns([1, 4])
-            with c_d1:
-                st.download_button(
-                    label="⬇️ Download PDF",
-                    data=pdf_info['buffer'],
-                    file_name=pdf_info['filename'],
-                    mime="application/pdf",
-                    type="primary",
-                    key="persistent_download_btn"
-                )
-            with c_d2:
-                if st.button("Close / Start New"):
-                    del st.session_state['generated_pdf_info']
-                    st.rerun()
-        st.markdown("---")
+        show_success_dialog(st.session_state['generated_pdf_info'])
 
     # --- 2. PENDING APPROVALS (RESUME SALE) ---
-    # Only show if we aren't currently showing a success message (to keep UI clean), or show below.
     with st.expander("⏳ Pending Approvals (Resume Sale)", expanded=True):
         with db_session() as db:
-            # Query the NEW table (Filters Status IN ['Pending', 'Approved'])
-            # Completed items are automatically excluded by the query
             pending = get_pending_approvals(db, branch_id)
 
             if pending:
@@ -119,13 +144,12 @@ def SalesForm():
                             if col_p3.button("🖨️ Finalize & Print", key=f"fin_{p.id}", type="primary",
                                              use_container_width=True):
                                 try:
-                                    # A. LOAD DATA FROM JSON BLOB
+                                    # A. LOAD DATA
                                     saved_data = dict(p.Order_JSON)
 
                                     # B. GENERATE REAL SEQUENCES
                                     dc_number, dc_seq = get_next_dc_number(db, branch_id)
 
-                                    # Recalculate Invoice numbers
                                     branch_obj = db.query(models.Branch).get(branch_id)
                                     uni_data = get_universal_data(db)
                                     firm_master_df = uni_data['firm_master']
@@ -145,20 +169,16 @@ def SalesForm():
                                         elif bill['accessory_slot'] == 2:
                                             bill_2_seq = inv_seq
 
-                                    # C. UPDATE DATA WITH REAL NUMBERS
+                                    # C. UPDATE DATA
                                     saved_data['DC_Number'] = dc_number
                                     saved_data['DC_Sequence_No'] = dc_seq
                                     saved_data['Acc_Inv_1_No'] = bill_1_seq
                                     saved_data['Acc_Inv_2_No'] = bill_2_seq
                                     saved_data['Timestamp'] = datetime.now(IST_TIMEZONE)
 
-                                    # D. INSERT INTO REAL TABLE
+                                    # D. INSERT
                                     real_record = create_sales_record(db, saved_data)
-
-                                    # E. CLOSE THE REQUEST (Marks as Completed)
                                     update_approval_status(db, p.id, "Completed")
-
-                                    # F. LOG & PRINT
                                     log_sale(db, branch_id, real_record.Model, real_record.Variant,
                                              real_record.Paint_Color, 1,
                                              datetime.now(IST_TIMEZONE), f"Auto-logged: {dc_number}")
@@ -167,8 +187,7 @@ def SalesForm():
                                     pdf_buffer = io.BytesIO()
                                     reprint_order.generate_pdf_challan(pdf_buffer)
 
-                                    # G. SAVE TO SESSION & RERUN
-                                    # This ensures the list refreshes (removing the item) but download stays
+                                    # G. SAVE TO SESSION
                                     st.session_state['generated_pdf_info'] = {
                                         'dc_number': dc_number,
                                         'buffer': pdf_buffer.getvalue(),
@@ -231,16 +250,16 @@ def SalesForm():
         c1, c2 = st.columns(2)
         name = c1.text_input("Customer Name:", key="customer_name")
         phone = c2.text_input("Customer Phone Number:", key="customer_phone")
-        place = st.text_input("Place/City:")
-        sales_staff = st.selectbox("Sales Staff:", STAFF_LIST)
+        place = st.text_input("Place/City:", key="customer_place")
+        sales_staff = st.selectbox("Sales Staff:", STAFF_LIST, key="sales_staff_selector")
 
     with st.container(border=True):
         st.header("2. Vehicle Configuration & Pricing")
         all_models = sorted(list(set(vehicles_df['Model'].str.strip().unique())))
         c1, c2 = st.columns(2)
-        selected_model = c1.selectbox("Vehicle Model:", all_models)
+        selected_model = c1.selectbox("Vehicle Model:", all_models, key="vehicle_model_selector")
         avail_variants = vehicles_df[vehicles_df['Model'].str.strip() == selected_model]
-        selected_variant = c2.selectbox("Variant:", avail_variants['Variant'].tolist())
+        selected_variant = c2.selectbox("Variant:", avail_variants['Variant'].tolist(), key="vehicle_variant_selector")
 
         colors = ["N/A"]
         if not avail_variants.empty and selected_variant:
@@ -249,21 +268,22 @@ def SalesForm():
                 colors = [c.strip() for c in c_str.split(',')]
             except:
                 pass
-        selected_paint_color = st.selectbox("Paint Color:", colors)
+        selected_paint_color = st.selectbox("Paint Color:", colors, key="vehicle_color_selector")
         selected_vehicle_row = avail_variants[avail_variants['Variant'] == selected_variant]
 
         # Double Tax & PR Checkbox
         c3, c4, c5 = st.columns(3)
-        pr_fee_checkbox = c3.checkbox("PR Fee Applicable?")
-        double_tax_checkbox = c4.checkbox("Double Tax Collected?")
-        ew_selection = c5.selectbox("Extended Warranty:", ["None", "3+1", "3+2", "3+3"])
+        pr_fee_checkbox = c3.checkbox("PR Fee Applicable?", key="pr_check")
+        double_tax_checkbox = c4.checkbox("Double Tax Collected?", key="double_tax_check")
+        ew_selection = c5.selectbox("Extended Warranty:", ["None", "3+1", "3+2", "3+3"], key="ew_select")
 
         listed_price = (selected_vehicle_row['FINAL_PRICE'].iloc[
                             0] + pricing_adjustment) if not selected_vehicle_row.empty else 0.0
         st.info(f"Listed Price: **{format_currency(listed_price)}**")
 
         c5, c6 = st.columns(2)
-        final_cost_by_staff = c5.number_input("Final Cost (after discount):", value=float(listed_price), step=100.0)
+        final_cost_by_staff = c5.number_input("Final Cost (after discount):", value=float(listed_price), step=100.0,
+                                              key="final_cost_input")
         discount = listed_price - final_cost_by_staff
         if discount > 0:
             c6.success(f"Discount: **{format_currency(discount)}**")
@@ -288,7 +308,8 @@ def SalesForm():
             selected_keys = st.multiselect(
                 "🔗 Link Existing Booking Receipts (Optional):",
                 options=list(receipt_options.keys()),
-                help="Select booking receipts already paid by this customer."
+                help="Select booking receipts already paid by this customer.",
+                key="booking_receipts_select"
             )
 
             for key in selected_keys:
@@ -301,25 +322,26 @@ def SalesForm():
         else:
             st.caption("No unlinked booking receipts found for this branch.")
 
-        sale_type = st.radio("Sale Type:", ["Cash", "Finance"], horizontal=True)
+        sale_type = st.radio("Sale Type:", ["Cash", "Finance"], horizontal=True, key="sale_type_radio")
 
         if sale_type == "Finance":
-            out_finance_flag = st.checkbox("Check if Out Finance:")
-            financier_selection = st.selectbox("Financier Company:", FINANCIER_LIST)
+            out_finance_flag = st.checkbox("Check if Out Finance:", key="out_finance_check")
+            financier_selection = st.selectbox("Financier Company:", FINANCIER_LIST, key="financier_selector")
 
             if financier_selection == "Other" and out_finance_flag:
                 st.markdown("---")
-                final_financier_name = st.text_input("Custom Finance Company:")
-                final_executive_name = st.text_input("Custom Executive Name:")
+                final_financier_name = st.text_input("Custom Finance Company:", key="custom_financier")
+                final_executive_name = st.text_input("Custom Executive Name:", key="custom_executive")
             elif financier_selection == 'Bank':
-                banker_name = st.text_input("Banker's Name:")
+                banker_name = st.text_input("Banker's Name:", key="banker_name_input")
                 final_financier_name = banker_name
             else:
                 final_financier_name = financier_selection
-                final_executive_name = st.selectbox("Executive Name:", EXECUTIVE_LIST)
+                final_executive_name = st.selectbox("Executive Name:", EXECUTIVE_LIST, key="finance_executive_selector")
 
             dd_val = linked_total if linked_total > 0 else 0.0
-            dd_amount = st.number_input("DD / Booking Amount (Expected):", min_value=0.0, step=100.0, value=dd_val)
+            dd_amount = st.number_input("DD / Booking Amount (Expected):", min_value=0.0, step=100.0, value=dd_val,
+                                        key="dd_amount_input")
 
             hp_fee_to_charge, incentive_earned = calculate_finance_fees(
                 financier_selection, dd_amount, out_finance_flag, incentive_rules

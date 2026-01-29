@@ -47,10 +47,12 @@ def load_dashboard_data(branch_id_filter: str):
                 data[col] = pd.to_numeric(data[col], errors='coerce').fillna(0)
 
         # Live calculation for accurate pending amounts
-        data['Live_Shortfall'] = data['Payment_DD'] - data['Payment_DD_Received']
+        # FIX: Subtract both initial DD received AND any subsequent shortfall recovery
+        data['Live_Shortfall'] = data['Payment_DD'] - (data['Payment_DD_Received'] + data['shortfall_received'])
 
         # 1. Dynamic Dues Calculation
-        data['has_dues'] = (data['Live_Shortfall'] > 0.0) | (data['has_double_tax'] == True)
+        # Use a small epsilon (1.0) to account for floating point variance, though 0.0 is usually fine for strict logic
+        data['has_dues'] = (data['Live_Shortfall'] > 1.0) | (data['has_double_tax'] == True)
 
         # --- NEW: Aging & Status Logic (Text Only for Styling) ---
         if 'Timestamp' in data.columns:
@@ -65,8 +67,9 @@ def load_dashboard_data(branch_id_filter: str):
                 return "Cash/Other"
 
             # 1. Fully Paid -> Green Status
-            # We use a small epsilon or direct comparison. Assuming currency is 2 decimal places.
-            if row['Payment_DD_Received'] >= (row['Payment_DD'] - 1.0):
+            # Check if total received (Initial + Recovery) matches Expected
+            total_received = row['Payment_DD_Received'] + row['shortfall_received']
+            if total_received >= (row['Payment_DD'] - 1.0):
                 return "Paid"
 
             # 2. Pending -> Check Aging

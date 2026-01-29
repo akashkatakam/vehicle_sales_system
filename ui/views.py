@@ -225,9 +225,154 @@ def render_backoffice_view(data):
 
 
 def render_insurance_tr_view(data: pd.DataFrame):
+    """
+    Renders the focused view for the Insurance/TR team.
+    Shows records that have completed PDI but not TR.
+    """
     st.header("Insurance & TR Processing Queue")
-    # ... [Keep your existing Insurance/TR logic - simplified for brevity here but essential to keep] ...
-    # Assuming previous code is retained for this function
+
+    # 1. Filter data to the relevant queue
+    # We only want to see records that are 'PDI Complete' or 'Insurance Done'
+    statuses_to_show = ['PDI Complete', 'Insurance Done', 'TR Done', 'PDI In Progress']
+    queue_df = data[data['fulfillment_status'].isin(statuses_to_show)].copy()
+
+    if queue_df.empty:
+        st.info("No vehicles are currently pending Insurance or TR processing.")
+        return
+
+    # 2. Define columns for the data editor
+    columns_to_show = [
+        'id',
+        'DC_Number',
+        'Customer_Name',
+        'Phone_Number',
+        'WA_Phone',
+        'Model',
+        'Variant',
+        'Paint_Color',
+        'Banker_Name',
+        'chassis_no',
+        'engine_no',
+        'ew_selection',
+        'is_insurance_done',
+        'is_tr_done',
+        'has_dues',
+        'has_double_tax',
+        'plates_received'
+    ]
+
+    # Filter the DataFrame
+    df_to_show = queue_df[columns_to_show].reset_index(drop=True)
+
+    # 3. Configure the data editor
+    column_config = {
+        'id': st.column_config.NumberColumn("ID", disabled=True),
+        'DC_Number': st.column_config.TextColumn("DC No.", disabled=True),
+        'Customer_Name': st.column_config.TextColumn("Customer", disabled=True),
+        'Phone_Number': st.column_config.TextColumn("Phone", disabled=True),
+        'WA_Phone': st.column_config.TextColumn("WA Phone", disabled=True),
+        'Model': st.column_config.TextColumn("Model", disabled=True),
+        'chassis_no': st.column_config.TextColumn("Chassis", disabled=True),
+        'engine_no': st.column_config.TextColumn("Engine", disabled=True),
+        'ew_selection': st.column_config.TextColumn("Extended Warranty", disabled=True),
+        # These are the editable columns
+        'is_insurance_done': st.column_config.CheckboxColumn("Insurance Done?"),
+        'is_tr_done': st.column_config.CheckboxColumn("TR Done?"),
+        'has_double_tax': st.column_config.CheckboxColumn("Double Tax?"),
+        'has_dues': st.column_config.CheckboxColumn("Dues?", disabled=True),
+        'plates_received': st.column_config.CheckboxColumn("Plates Received?"),
+    }
+
+    # Define which columns are disabled
+    disabled_cols = [
+        'id', 'DC_Number', 'Customer_Name', 'Model', 'chassis_no', 'engine_no',
+        'Phone_Number', 'WA_Phone', 'has_dues'
+    ]
+
+    editor_key = "insurance_tr_editor"
+
+    edited_df = st.data_editor(
+        df_to_show,
+        column_config=column_config,
+        disabled=disabled_cols,
+        hide_index=True,
+        use_container_width=True,
+        key=editor_key
+    )
+
+    # --- POPUP LOGIC: Trigger modal on check ---
+    if editor_key in st.session_state and st.session_state[editor_key].get("edited_rows"):
+        # Initialize tracker for processed interactions in this session
+        if "processed_wa_popups" not in st.session_state:
+            st.session_state.processed_wa_popups = set()
+
+        edited_rows = st.session_state[editor_key]["edited_rows"]
+
+        # Iterate through edits to find newly checked boxes
+        for idx_str, changes in edited_rows.items():
+            idx = int(idx_str)
+
+            # Define the columns we want to trigger notifications for
+            trigger_map = {
+                'is_insurance_done': ('Insurance Completed', INSURANCE_MSG),
+                'is_tr_done': ('TR Done', TR_MSG),
+                'plates_received': ('Plates Received', PLATES_MSG)
+            }
+
+            for col, label_msg_tuple in trigger_map.items():
+                # If this specific column was changed to True
+                if changes.get(col) is True:
+                    unique_interaction_id = f"{idx}_{col}"
+
+                    # Only show if we haven't shown it yet
+                    if unique_interaction_id not in st.session_state.processed_wa_popups:
+                        # Get Phone Number
+                        phone = df_to_show.iloc[idx]['WA_Phone']
+                        label, msg = label_msg_tuple
+
+                        # Mark as processed BEFORE showing to prevent infinite loop on re-render
+                        st.session_state.processed_wa_popups.add(unique_interaction_id)
+
+                        # Trigger Dialog
+                        send_wa_modal(phone, msg, label)
+
+                # Optional: If unchecked (False), remove from processed so it can trigger again if re-checked
+                elif changes.get(col) is False:
+                    unique_interaction_id = f"{idx}_{col}"
+                    if unique_interaction_id in st.session_state.processed_wa_popups:
+                        st.session_state.processed_wa_popups.remove(unique_interaction_id)
+
+    # 4. Add the Save button
+    if st.button("Save Insurance/TR Updates", type="primary"):
+        if editor_key in st.session_state and st.session_state[editor_key]["edited_rows"]:
+            db = next(get_db())
+            try:
+                updates = 0
+                # Get the changes from session state
+                edited_rows = st.session_state[editor_key]["edited_rows"]
+
+                for idx, changes in edited_rows.items():
+                    # Get the 'id' of the record from our filtered DataFrame
+                    record_id = int(df_to_show.iloc[int(idx)]['id'])
+
+                    # 'changes' is a dict like {'is_insurance_done': True}
+                    update_insurance_tr_status(db, record_id, changes)
+                    updates += 1
+
+                st.success(f"Updated {updates} records!")
+
+                # Clear session state related to edits and popups
+                if "processed_wa_popups" in st.session_state:
+                    del st.session_state.processed_wa_popups
+
+                st.cache_data.clear()  # Clear the cache to refresh data
+                st.rerun()
+            except Exception as e:
+                st.error(f"Save failed: {e}")
+            finally:
+                db.close()
+        else:
+            st.info("No changes to save.")
 
 
 def render_banker_table(data):
