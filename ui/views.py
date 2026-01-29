@@ -376,7 +376,7 @@ def render_insurance_tr_view(data: pd.DataFrame):
 
 
 def render_banker_table(data):
-    st.subheader("DD Pending by Banker (Aging)")
+    st.subheader("DD Pending by Banker")
     mask = (data['Banker_Name'].notna()) & (data['Banker_Name'] != '') & (data['Banker_Name'] != 'N/A (Cash Sale)') & (
                 data['Live_Shortfall'] > 0)
     banker_data = data[mask].copy()
@@ -389,6 +389,15 @@ def render_banker_table(data):
             Files_0_7=('Files_0_7', 'sum'), Files_7_15=('Files_7_15', 'sum'),
             Files_15_Plus=('Files_15_Plus', 'sum')
         ).reset_index().sort_values('Pending', ascending=False)
+
+        summary = summary.rename(columns={
+            "Banker_Name": "Financier",
+            "Pending": "Total Due (₹)",
+            "Units": "File Count",
+            "Files_0_7": "< 7 Days",
+            "Files_7_15": "7-15 Days",
+            "Files_15_Plus": "> 15 Days"
+        })
         st.dataframe(summary, use_container_width=True, hide_index=True)
     else:
         st.info("No pending DD amounts for bankers.")
