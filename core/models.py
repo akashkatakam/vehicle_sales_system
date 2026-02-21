@@ -194,7 +194,6 @@ class SalesRecord(Base):
     price_ew = Column(Float, default=0.0)
     price_pr = Column(Float, default=0.0)
     price_hc = Column(Float, default=0.0)
-    sale_type = Column(String(20), default='Cash', nullable=False)  # NEW: 'Cash' or 'Finance'
     branch = relationship("Branch", back_populates="sales")
     vehicle = relationship("VehicleMaster", back_populates="sale_record", uselist=False)
 
