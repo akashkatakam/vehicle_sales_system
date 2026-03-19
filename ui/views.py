@@ -415,7 +415,7 @@ def render_dues_manager(data, role):
     else:
         df_display = data.copy().reset_index(drop=True)
 
-    view_cols = ['DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Model', 'Variant', 'Sales_Staff',
+    view_cols = ['DC_Number', 'Branch_Name', 'Timestamp', 'Customer_Name', 'Phone_Number', 'Model', 'Variant', 'Sales_Staff',
                  'Banker_Name',
                  'Finance_Executive', 'Payment_DownPayment', 'Price_ORP', 'Price_Negotiated_Final', 'Payment_DD',
                  'Payment_DD_Received',

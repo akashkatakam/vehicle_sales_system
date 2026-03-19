@@ -21,7 +21,7 @@ if check_login():
         range_min = max_d.replace(day=1)
         dates = st.date_input("Date Range", [range_min, max_d], min_value=min_d, max_value=max_d)
 
-        if "Owner" in user_roles or "ALL" in accessible_branches:
+        if "ALL" in accessible_branches:
             allowed = sorted(data['Branch_Name'].unique())
         else:
             allowed = sorted([b.Branch_Name for b in all_branches if b.Branch_ID in accessible_branches])
