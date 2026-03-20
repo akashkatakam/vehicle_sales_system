@@ -56,7 +56,10 @@ def check_login():
 
                     # Parse Branches
                     raw_branches = user.Branch_ID if user.Branch_ID else ""
+                    parsed_roles = st.session_state.get("roles", [])
                     if "ALL" in raw_branches.upper():
+                        st.session_state["accessible_branches"] = ["ALL"]
+                    elif not raw_branches.strip() and "Owner" in parsed_roles:
                         st.session_state["accessible_branches"] = ["ALL"]
                     else:
                         st.session_state["accessible_branches"] = [
